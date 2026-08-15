@@ -465,11 +465,14 @@ class ChatViewModel(
         fun factory(workspaceId: String, sessionId: String): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                override fun <T : ViewModel> create(
+                    modelClass: Class<T>,
+                    extras: androidx.lifecycle.viewmodel.CreationExtras
+                ): T {
                     if (modelClass.isAssignableFrom(ChatViewModel::class.java)) {
-                        // 这里需要从全局获取 SettingsViewModel 和 RpcClient 实例
-                        // 实际应用中可以通过 Application 或依赖注入容器获取
-                        val settingsViewModel = SettingsViewModel()
+                        val application = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
+                            ?: throw IllegalStateException("Application not available in extras")
+                        val settingsViewModel = SettingsViewModel(application)
                         val rpcClient = RpcClient()
                         return ChatViewModel(workspaceId, sessionId, settingsViewModel, rpcClient) as T
                     }

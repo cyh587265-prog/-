@@ -4,9 +4,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import okhttp3.OkHttpClient
@@ -68,7 +68,7 @@ class MuxStream {
         awaitClose {
             response?.close()
         }
-    }.withContext(Dispatchers.IO)
+    }.flowOn(Dispatchers.IO)
     private fun parseFrame(envelope: ServerEnvelope): MuxFrame? {
         return when (envelope.type) {
             "session/event" -> SessionEventFrame(

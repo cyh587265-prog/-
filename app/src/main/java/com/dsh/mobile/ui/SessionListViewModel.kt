@@ -174,9 +174,13 @@ class SessionListViewModel(
         fun provideFactory(workspaceId: String): ViewModelProvider.Factory {
             return object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
-                override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    val settingsViewModel = ViewModelProvider.AndroidViewModelFactory.getInstance()
-                        .create(SettingsViewModel::class.java) as SettingsViewModel
+                override fun <T : ViewModel> create(
+                    modelClass: Class<T>,
+                    extras: androidx.lifecycle.viewmodel.CreationExtras
+                ): T {
+                    val application = extras[ViewModelProvider.AndroidViewModelFactory.APPLICATION_KEY]
+                        ?: throw IllegalStateException("Application not available in extras")
+                    val settingsViewModel = SettingsViewModel(application)
                     return SessionListViewModel(workspaceId, settingsViewModel) as T
                 }
             }
