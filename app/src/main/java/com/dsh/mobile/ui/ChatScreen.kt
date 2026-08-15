@@ -328,7 +328,7 @@ fun ModelSelectionDialog(
     models: Map<String, List<ModelItem>>,
     isLoading: Boolean,
     onDismiss: () -> Unit,
-    onSelectModel: (String, String, Int?) -> Unit
+    onSelectModel: (String, String, String?) -> Unit
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -378,31 +378,28 @@ fun ModelSelectionDialog(
 fun ModelRowItem(
     model: ModelItem,
     provider: String,
-    onSelectModel: (String, String, Int?) -> Unit,
+    onSelectModel: (String, String, String?) -> Unit,
     onDismiss: () -> Unit
 ) {
-    var showEffortDialog by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { showEffortDialog = true }
+            .clickable {
+                // 直接用模型默认思考强度（服务端契约 reasoningEffort 为字符串）
+                onSelectModel(provider, model.id, model.defaultEffort)
+                onDismiss()
+            }
             .padding(8.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(model.name)
-        Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
-    }
-    if (showEffortDialog) {
-        ReasoningEffortDialog(
-            modelName = model.name,
-            currentEffort = model.defaultEffort,
-            onDismiss = { showEffortDialog = false },
-            onConfirm = { effort ->
-                onSelectModel(provider, model.id, effort)
-                showEffortDialog = false
-                onDismiss()
-            }
-        )
+        if (model.defaultEffort != null) {
+            Text(
+                text = "思考强度: ${model.defaultEffort}",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 @OptIn(ExperimentalMaterial3Api::class)
@@ -467,7 +464,7 @@ data class ModelItem(
     val id: String,
     val name: String,
     val provider: String,
-    val defaultEffort: Int? = null
+    val defaultEffort: String? = null
 )
 data class ChatUiState(
     val messages: List<ChatMessageUi> = emptyList(),

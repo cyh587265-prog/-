@@ -198,21 +198,23 @@ class ChatViewModel(
                 val current = result["current"]?.jsonObject
                 val currentModel = current?.get("model")?.jsonPrimitive?.content
                     ?: current?.get("name")?.jsonPrimitive?.content
-                // 解析模型列表
+                // 解析模型列表：group = {id, name, models:[{id,name,reasoning:{defaultEffort,...}}]}
                 val groups = result["groups"]?.jsonArray ?: emptyList()
                 val modelsMap = mutableMapOf<String, MutableList<ModelItem>>()
                 groups.forEach { group ->
                     val groupObj = group.jsonObject
-                    val provider = groupObj["provider"]?.jsonPrimitive?.content ?: "未知"
+                    val providerId = groupObj["id"]?.jsonPrimitive?.content ?: "unknown"
+                    val groupName = groupObj["name"]?.jsonPrimitive?.content ?: providerId
                     val modelList = groupObj["models"]?.jsonArray ?: return@forEach
                     val items = modelList.mapNotNull { model ->
                         val modelObj = model.jsonObject
                         val id = modelObj["id"]?.jsonPrimitive?.content ?: return@mapNotNull null
                         val name = modelObj["name"]?.jsonPrimitive?.content ?: id
-                        val effort = modelObj["reasoningEffort"]?.jsonPrimitive?.intOrNull
-                        ModelItem(id, name, provider, effort)
+                        val effort = modelObj["reasoning"]?.jsonObject
+                            ?.get("defaultEffort")?.jsonPrimitive?.content
+                        ModelItem(id, name, providerId, effort)
                     }
-                    modelsMap.getOrPut(provider) { mutableListOf() }.addAll(items)
+                    modelsMap.getOrPut(groupName) { mutableListOf() }.addAll(items)
                 }
                 _uiState.update { state ->
                     state.copy(
@@ -233,7 +235,7 @@ class ChatViewModel(
             }
         }
     }
-    fun selectModel(provider: String, model: String, reasoningEffort: Int?) {
+    fun selectModel(provider: String, model: String, reasoningEffort: String?) {
         viewModelScope.launch {
             try {
                 val baseUrl = settingsViewModel.baseUrl.value
