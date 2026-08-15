@@ -82,6 +82,11 @@ class MuxStream {
                 rpcId = envelope.rpcId,
                 payload = payload
             )
+            "user/message" -> UserMessageFrame(
+                type = frameType,
+                rpcId = envelope.rpcId,
+                payload = payload
+            )
             "assistant/message" -> AssistantMessageFrame(
                 type = frameType,
                 rpcId = envelope.rpcId,
@@ -92,7 +97,7 @@ class MuxStream {
                 rpcId = envelope.rpcId,
                 payload = payload
             )
-            else -> null // Unknown frame type, discard
+            else -> null // Unknown frame type (session/subscribed, session/jobs, ...), discard
         }
     }
     @kotlinx.serialization.Serializable
@@ -108,6 +113,11 @@ sealed class MuxFrame {
     abstract val payload: JsonObject?
 }
 data class SessionEventFrame(
+    override val type: String,
+    override val rpcId: String?,
+    override val payload: JsonObject?
+) : MuxFrame()
+data class UserMessageFrame(
     override val type: String,
     override val rpcId: String?,
     override val payload: JsonObject?

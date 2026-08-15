@@ -349,16 +349,15 @@ fun ModelSelectionDialog(
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    models.forEach { (provider, items) ->
+                    models.forEach { (groupName, items) ->
                         Text(
-                            text = provider,
+                            text = groupName,
                             style = MaterialTheme.typography.titleSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
                         items.forEach { model ->
                             ModelRowItem(
                                 model = model,
-                                provider = provider,
                                 onSelectModel = onSelectModel,
                                 onDismiss = onDismiss
                             )
@@ -377,7 +376,6 @@ fun ModelSelectionDialog(
 @Composable
 fun ModelRowItem(
     model: ModelItem,
-    provider: String,
     onSelectModel: (String, String, String?) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -385,8 +383,8 @@ fun ModelRowItem(
         modifier = Modifier
             .fillMaxWidth()
             .clickable {
-                // 直接用模型默认思考强度（服务端契约 reasoningEffort 为字符串）
-                onSelectModel(provider, model.id, model.defaultEffort)
+                // provider 必须是服务端 group.id（model.provider 已存 id）
+                onSelectModel(model.provider, model.id, model.defaultEffort)
                 onDismiss()
             }
             .padding(8.dp),

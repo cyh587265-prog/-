@@ -9,6 +9,7 @@ import com.dsh.mobile.net.RpcClient
 import com.dsh.mobile.net.WireMessage
 import com.dsh.mobile.ui.SettingsViewModel
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -46,6 +47,7 @@ class ChatViewModel(
             MuxFallbackPoller(rpcClient, baseUrl)
                 .observe(sessionId) { /* onEvent unused; flow is the channel */ }
                 .catch { e -> Log.e("ChatViewModel", "Message stream error", e) }
+                .buffer(Channel.UNLIMITED)  // 无界缓冲：UI 慢时不丢消息
                 .collect { wireMessage -> handleWireMessage(wireMessage) }
         }
     }
@@ -83,13 +85,7 @@ class ChatViewModel(
     }
     fun sendMessage(text: String) {
         if (text.isBlank()) return
-        val userMessage = ChatMessageUi(
-            id = "user_${System.currentTimeMillis()}",
-            text = text,
-            reasoning = "",
-            kind = MessageKind.User
-        )
-        addMessage(userMessage)
+        // 不插入 optimistic 用户消息：等服务端 user/message 事件回显（SSE 或轮询），避免重复
         _uiState.update { it.copy(inputText = "", isSending = true) }
         viewModelScope.launch {
             try {

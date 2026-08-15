@@ -67,8 +67,8 @@ class MuxFallbackPoller(
     ): Flow<WireMessage> = callbackFlow {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val lastDataTime = AtomicLong(System.currentTimeMillis())
-        // Per-observe dedup state (session-scoped, cleared on new observe)
-        val seenSeqs = mutableSetOf<Int>()
+        // Per-observe dedup state (session-scoped, cleared on new observe); thread-safe for SSE+poll concurrency
+        val seenSeqs = ConcurrentHashMap.newKeySet<Int>()
         val lastSeq = AtomicLong(0L)
         var streamJob: Job? = null
         var pollerJob: Job? = null
@@ -121,7 +121,15 @@ class MuxFallbackPoller(
                 try {
                     MuxStream().connect(baseUrl).collect { frame ->
                         lastDataTime.set(System.currentTimeMillis())
+                        // 会话隔离：帧 payload 若带 sessionId，只处理当前会话的
+                        val frameSessionId = frame.payload?.get("sessionId")?.jsonPrimitive?.content
+                        if (frameSessionId != null && frameSessionId != sessionId) return@collect
                         when (frame) {
+                            is UserMessageFrame -> {
+                                parseWireEvent(frame.payload ?: return@collect)?.let { msg ->
+                                    processMessages(listOf(msg))
+                                }
+                            }
                             is AssistantMessageFrame -> {
                                 parseWireEvent(frame.payload ?: return@collect)?.let { msg ->
                                     processMessages(listOf(msg))
@@ -131,6 +139,8 @@ class MuxFallbackPoller(
                             is SessionEventFrame -> { }
                         }
                     }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e  // 不吞取消
                 } catch (e: Exception) {
                     Log.w("MuxFallbackPoller", "SSE stream ended, reconnect in 1s", e)
                 }
