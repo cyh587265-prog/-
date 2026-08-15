@@ -97,7 +97,10 @@ class MuxStream {
                 rpcId = envelope.rpcId,
                 payload = payload
             )
-            else -> null // Unknown frame type (session/subscribed, session/jobs, ...), discard
+            else -> {
+                android.util.Log.d("MuxStream", "Unknown frame type: $frameType")
+                null // Unknown frame type (session/subscribed, session/jobs, ...), discard
+            }
         }
     }
     @kotlinx.serialization.Serializable

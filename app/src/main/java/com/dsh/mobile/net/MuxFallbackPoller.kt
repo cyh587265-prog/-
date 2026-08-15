@@ -36,6 +36,7 @@ class MuxFallbackPoller(
                 data["content"]?.jsonArray
             } else {
                 data["message"]?.jsonObject?.get("content")?.jsonArray
+                    ?: data["content"]?.jsonArray // 降级兼容
             } ?: return null
             var text = ""
             var reasoning = ""
@@ -72,6 +73,7 @@ class MuxFallbackPoller(
         val lastSeq = AtomicLong(0L)
         var streamJob: Job? = null
         var pollerJob: Job? = null
+        var pollStarted = false
 
         suspend fun processMessages(messages: List<WireMessage>) {
             val newMessages = messages
@@ -94,11 +96,13 @@ class MuxFallbackPoller(
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
                 val events = result["events"]?.jsonArray ?: return
+                // 全量解析 + seenSeqs 去重（不依赖 lastSeq 过滤：即使 watermark 已推进，
+                // 未消费的消息仍会因 seq 不在 seenSeqs 而重新 emit，保证不丢）
                 val messages = events.mapNotNull { entry ->
                     val eventObj = entry.jsonObject["event"]?.jsonObject
                         ?: entry.jsonObject
                     parseWireEvent(eventObj)
-                }.filter { it.seq > lastSeq.get() }  // incremental
+                }
                 processMessages(messages)
             } catch (e: Exception) {
                 Log.w("MuxFallbackPoller", "pollHistory failed", e)
@@ -118,6 +122,11 @@ class MuxFallbackPoller(
         // SSE main channel: emit complete messages only; reconnect on drop (LAN flake recovery)
         streamJob = scope.launch {
             while (isActive) {
+                // 轮询已启动（隧道降级）后不再建立 SSE 连接，避免双通道
+                if (pollStarted) {
+                    delay(2000)
+                    continue
+                }
                 try {
                     MuxStream().connect(baseUrl).collect { frame ->
                         // 会话隔离：帧 payload 若带 sessionId，只处理当前会话的
@@ -146,14 +155,15 @@ class MuxFallbackPoller(
         }
 
         // Silent detection: SSE stays open but zero bytes under quick tunnels.
-        // Every 3s, if no SSE data for 5s, switch to polling (loop until started).
+        // Every 3s, if no valid message for 5s, switch to polling (loop until started).
         scope.launch {
-            var pollStarted = false
             while (isActive && !pollStarted) {
                 delay(3000)
                 if (System.currentTimeMillis() - lastDataTime.get() > 5000) {
                     pollStarted = true
                     streamJob?.cancel()
+                    // catch-up：切换前先拉一次历史，避免切换窗口丢消息
+                    pollHistory()
                     startPoller(2000)
                 }
             }

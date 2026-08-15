@@ -38,8 +38,11 @@ class ChatViewModel(
         loadHistory()
         startMessageStream()
     }
+    private var streamJob: Job? = null
     private fun startMessageStream() {
-        viewModelScope.launch {
+        // 防重复订阅：配置变更/重建时避免多个消息流
+        if (streamJob?.isActive == true) return
+        streamJob = viewModelScope.launch {
             val baseUrl = settingsViewModel.baseUrl.value
             if (baseUrl.isBlank()) return@launch
             // 统一消息入口：Poller 内部 SSE 优先 + 静默检测切轮询，输出完整 WireMessage
@@ -50,6 +53,11 @@ class ChatViewModel(
                 .buffer(Channel.UNLIMITED)  // 无界缓冲：UI 慢时不丢消息
                 .collect { wireMessage -> handleWireMessage(wireMessage) }
         }
+    }
+
+    override fun onCleared() {
+        streamJob?.cancel()
+        super.onCleared()
     }
     private fun handleWireMessage(wireMessage: WireMessage) {
         // 只有 assistant 完整消息到达才取消发送超时
