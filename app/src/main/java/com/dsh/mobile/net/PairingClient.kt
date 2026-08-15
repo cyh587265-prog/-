@@ -1,4 +1,6 @@
 package com.dsh.mobile.net
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -10,8 +12,9 @@ class PairingClient {
     private data class PairAcceptRequest(val token: String)
     @Serializable
     private data class PairAcceptResponse(val ok: Boolean, val deviceId: String? = null)
-    suspend fun accept(token: String, baseUrl: String): Result<String> {
-        return try {
+    suspend fun accept(token: String, baseUrl: String): Result<String> =
+        withContext(Dispatchers.IO) {
+            try {
             val url = "$baseUrl${Constants.PAIR_ACCEPT_PATH}"
             val requestBody = PairAcceptRequest(token)
             val bodyJson = json.encodeToString(PairAcceptRequest.serializer(), requestBody)

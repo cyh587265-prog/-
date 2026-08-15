@@ -131,7 +131,7 @@ fun WorkspaceList(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            items(workspaces) { workspace ->
+            items(workspaces, key = { it.workspaceId }) { workspace ->
                 WorkspaceItem(
                     workspace = workspace,
                     onClick = { onWorkspaceClick(workspace.workspaceId) }

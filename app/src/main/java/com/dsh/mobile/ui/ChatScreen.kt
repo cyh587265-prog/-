@@ -356,29 +356,12 @@ fun ModelSelectionDialog(
                             color = MaterialTheme.colorScheme.primary
                         )
                         items.forEach { model ->
-                            var showEffortDialog by remember { mutableStateOf(false) }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable { showEffortDialog = true }
-                                    .padding(8.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(model.name)
-                                Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
-                            }
-                            if (showEffortDialog) {
-                                ReasoningEffortDialog(
-                                    modelName = model.name,
-                                    currentEffort = model.defaultEffort,
-                                    onDismiss = { showEffortDialog = false },
-                                    onConfirm = { effort ->
-                                        onSelectModel(provider, model.id, effort)
-                                        showEffortDialog = false
-                                        onDismiss()
-                                    }
-                                )
-                            }
+                            ModelRowItem(
+                                model = model,
+                                provider = provider,
+                                onSelectModel = onSelectModel,
+                                onDismiss = onDismiss
+                            )
                         }
                     }
                 }
@@ -390,6 +373,37 @@ fun ModelSelectionDialog(
             }
         }
     )
+}
+@Composable
+fun ModelRowItem(
+    model: ModelItem,
+    provider: String,
+    onSelectModel: (String, String, Int?) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var showEffortDialog by remember { mutableStateOf(false) }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { showEffortDialog = true }
+            .padding(8.dp),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(model.name)
+        Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
+    }
+    if (showEffortDialog) {
+        ReasoningEffortDialog(
+            modelName = model.name,
+            currentEffort = model.defaultEffort,
+            onDismiss = { showEffortDialog = false },
+            onConfirm = { effort ->
+                onSelectModel(provider, model.id, effort)
+                showEffortDialog = false
+                onDismiss()
+            }
+        )
+    }
 }
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

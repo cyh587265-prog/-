@@ -44,14 +44,13 @@ class MuxStream {
                     val data = line.substring(6)
                     if (data.isNotEmpty()) {
                         try {
-                            val jsonObj = json.decodeFromString<JsonObject>(data)
                             val envelope = json.decodeFromString<ServerEnvelope>(data)
                             val frame = parseFrame(envelope)
                             if (frame != null) {
                                 trySend(frame)
                             }
                         } catch (e: Exception) {
-                            // Ignore malformed JSON
+                            android.util.Log.w("MuxStream", "Failed to parse SSE frame", e)
                         }
                     }
                 } else if (line.startsWith(": ping")) {

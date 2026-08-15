@@ -144,7 +144,7 @@ fun SessionListScreen(
                             contentPadding = PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
-                            items(uiState.sessions) { session ->
+                            items(uiState.sessions, key = { it.sessionId }) { session ->
                                 SessionItem(
                                     session = session,
                                     onClick = {

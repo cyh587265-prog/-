@@ -12,6 +12,7 @@ import com.dsh.mobile.net.RpcClient
 import com.dsh.mobile.net.SessionEventFrame
 import com.dsh.mobile.net.WireMessage
 import com.dsh.mobile.ui.SettingsViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
@@ -38,37 +39,33 @@ class ChatViewModel(
         startMessageStream()
     }
     private fun startMessageStream() {
-        viewModelScope.launch {
-            try {
-                val baseUrl = settingsViewModel.baseUrl.value
-                // MuxStream 是 class，需要实例化
-                val muxStream = MuxStream()
-                val streamFlow = muxStream.connect(baseUrl)
-                // Poller 作为兜底
-                val pollerFlow = MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
-                    // 收到 WireMessage 时处理
-                    handleWireMessage(wireMessage)
-                }
-                // 合并两个流
-                streamFlow.catch { e ->
-                    Log.e("ChatViewModel", "Stream error", e)
-                    // 流失败时 Poller 继续工作
-                }.collect { frame ->
-                    when (frame) {
-                        is SessionEventFrame -> {
-                            Log.d("ChatViewModel", "Session event: ${frame.type}")
-                        }
-                        is AssistantMessageFrame -> {
-                            handleAssistantMessage(frame.payload)
-                        }
-                        is MessageChunkFrame -> {
-                            handleMessageChunk(frame.payload)
+        streamJob?.cancel()
+        streamJob = viewModelScope.launch {
+            val baseUrl = settingsViewModel.baseUrl.value
+            if (baseUrl.isBlank()) return@launch
+            // SSE 流：消息主通道（解析帧）
+            launch {
+                MuxStream().connect(baseUrl)
+                    .catch { e -> Log.e("ChatViewModel", "SSE stream error", e) }
+                    .collect { frame ->
+                        when (frame) {
+                            is SessionEventFrame -> {
+                                Log.d("ChatViewModel", "Session event: ${frame.type}")
+                            }
+                            is AssistantMessageFrame -> {
+                                handleAssistantMessage(frame.payload)
+                            }
+                            is MessageChunkFrame -> {
+                                handleMessageChunk(frame.payload)
+                            }
                         }
                     }
-                }
-            } catch (e: Exception) {
-                Log.e("ChatViewModel", "Failed to start stream", e)
-                _uiState.update { it.copy(error = "连接失败: ${e.message}") }
+            }
+            // 轮询兜底：Poller 内部 SSE 断流后自动轮询 history，输出 WireMessage
+            launch {
+                MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
+                    handleWireMessage(wireMessage)
+                }.catch { e -> Log.e("ChatViewModel", "Fallback poller error", e) }.collect { }
             }
         }
     }
@@ -262,6 +259,11 @@ class ChatViewModel(
                 }
                 rpcClient.call("session.prompt", payload, baseUrl)
                 Log.d("ChatViewModel", "Message sent")
+                // 超时兜底：30 秒无消息回推则解除发送中状态，避免 UI 假死
+                viewModelScope.launch {
+                    delay(30_000)
+                    _uiState.update { it.copy(isSending = false) }
+                }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Failed to send message", e)
                 _uiState.update { 
@@ -310,7 +312,7 @@ class ChatViewModel(
                     state.copy(
                         messages = newMessages + state.messages,
                         isLoadingHistory = false,
-                        hasMoreHistory = messages.size >= 30
+                        hasMoreHistory = result["hasMore"]?.jsonPrimitive?.boolean ?: (messages.size >= 30)
                     )
                 }
                 limitMessages()

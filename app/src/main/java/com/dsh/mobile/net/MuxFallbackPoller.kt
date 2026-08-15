@@ -43,9 +43,36 @@ class MuxFallbackPoller(
                     put("maxMessages", 50)
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
-                val items = result["items"]?.jsonArray ?: return
-                val messages = items.map { item ->
-                    json.decodeFromString(WireMessage.serializer(), item.toString())
+                // session.history value: { events: [{ event: {type,seq,time,data}, view? }], hasMore }
+                val events = result["events"]?.jsonArray ?: return
+                val messages = events.mapNotNull { entry ->
+                    val eventObj = entry.jsonObject["event"]?.jsonObject ?: return@mapNotNull null
+                    val data = eventObj["data"]?.jsonObject ?: return@mapNotNull null
+                    val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return@mapNotNull null
+                    val content = data["content"]?.jsonArray
+                    var text = ""
+                    var reasoning = ""
+                    if (content != null) {
+                        content.forEach { block ->
+                            val b = block.jsonObject
+                            when (b["type"]?.jsonPrimitive?.content) {
+                                "text" -> text += b["text"]?.jsonPrimitive?.content ?: ""
+                                "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
+                            }
+                        }
+                    } else {
+                        val raw = data["text"]?.jsonPrimitive?.content ?: ""
+                        if (data["kind"]?.jsonPrimitive?.content == "reasoning") reasoning = raw else text = raw
+                    }
+                    val isUser = (eventObj["type"]?.jsonPrimitive?.content ?: "").contains("user")
+                        || (data["kind"]?.jsonPrimitive?.content ?: "").contains("user")
+                    WireMessage(
+                        id = data["id"]?.jsonPrimitive?.content ?: "msg-$seq",
+                        seq = seq,
+                        kind = if (isUser) "user" else "assistant",
+                        content = listOf(ContentBlock("text", text)),
+                        pending = false
+                    )
                 }
                 processMessages(messages)
             } catch (e: Exception) {

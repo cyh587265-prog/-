@@ -22,6 +22,7 @@ data class SessionRow(
     val updatedAt: JsonElement? = null,
     val running: Boolean = false,
     val blank: Boolean = false,
+    val parentSessionId: String? = null,
     val cwd: String? = null,
     val agentPreset: String? = null,
     val projections: JsonElement? = null
