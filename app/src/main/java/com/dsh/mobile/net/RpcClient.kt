@@ -1,4 +1,6 @@
 package com.dsh.mobile.net
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -24,26 +26,27 @@ class RpcClient {
         val value: JsonObject? = null,
         val error: JsonObject? = null
     )
-    suspend fun call(method: String, payload: JsonObject, baseUrl: String): JsonObject {
-        val rpcId = UUID.randomUUID().toString()
-        val url = "$baseUrl${Constants.API_PREFIX}/$method"
-        val requestBody = RpcRequest(rpcId, payload)
-        val bodyJson = json.encodeToString(RpcRequest.serializer(), requestBody)
-        val request = Request.Builder()
-            .url(url)
-            .post(bodyJson.toRequestBody("application/json".toMediaType()))
-            .build()
-        val response = DshHttpClient.client.newCall(request).execute()
-        val responseBody = response.body?.string() ?: throw Exception("Empty response")
-        if (!response.isSuccessful) {
-            throw Exception("RPC call failed with code ${response.code}: $responseBody")
+    suspend fun call(method: String, payload: JsonObject, baseUrl: String): JsonObject =
+        withContext(Dispatchers.IO) {
+            val rpcId = UUID.randomUUID().toString()
+            val url = "$baseUrl${Constants.API_PREFIX}/$method"
+            val requestBody = RpcRequest(rpcId, payload)
+            val bodyJson = json.encodeToString(RpcRequest.serializer(), requestBody)
+            val request = Request.Builder()
+                .url(url)
+                .post(bodyJson.toRequestBody("application/json".toMediaType()))
+                .build()
+            val response = DshHttpClient.client.newCall(request).execute()
+            val responseBody = response.body?.string() ?: throw Exception("Empty response")
+            if (!response.isSuccessful) {
+                throw Exception("RPC call failed with code ${response.code}: $responseBody")
+            }
+            val parsed = json.decodeFromString(RpcResponse.serializer(), responseBody)
+            if (!parsed.result.ok) {
+                throw Exception("RPC result error: ${parsed.result.error}")
+            }
+            parsed.result.value ?: buildJsonObject { }
         }
-        val parsed = json.decodeFromString(RpcResponse.serializer(), responseBody)
-        if (!parsed.result.ok) {
-            throw Exception("RPC result error: ${parsed.result.error}")
-        }
-        return parsed.result.value ?: buildJsonObject { }
-    }
     suspend fun sessionList(cursor: String? = null, baseUrl: String): SessionPage {
         val payload = buildJsonObject {
             cursor?.let { put("cursor", it) }
