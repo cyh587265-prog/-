@@ -29,6 +29,7 @@ class SessionListViewModel(
     private val _uiState = MutableStateFlow(SessionsUiState())
     val uiState: StateFlow<SessionsUiState> = _uiState.asStateFlow()
     val baseUrl = settingsViewModel.baseUrl
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     fun loadFirstPage() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
@@ -44,7 +45,7 @@ class SessionListViewModel(
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
                 )
-                val page = Json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromString<SessionPage>(result.toString())
                 _uiState.value = _uiState.value.copy(
                     sessions = page.items,
                     hasMore = page.hasMore,
@@ -76,7 +77,7 @@ class SessionListViewModel(
                     },
                     baseUrl = baseUrl.value
                 )
-                val page = Json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromString<SessionPage>(result.toString())
                 _uiState.value = _uiState.value.copy(
                     sessions = _uiState.value.sessions + page.items,
                     hasMore = page.hasMore,
@@ -102,7 +103,7 @@ class SessionListViewModel(
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
                 )
-                val page = Json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromString<SessionPage>(result.toString())
                 _uiState.value = _uiState.value.copy(
                     sessions = page.items,
                     hasMore = page.hasMore,
@@ -129,10 +130,10 @@ class SessionListViewModel(
                     },
                     baseUrl = baseUrl.value
                 )
-                val session = Json.decodeFromString<SessionRow>(result.toString())
+                val session = json.decodeFromString<SessionRow>(result.toString())
                 // 重新加载列表以显示新会话
                 loadFirstPage()
-                onSuccess(session.id)
+                onSuccess(session.sessionId)
             } catch (e: Exception) {
                 Log.e("SessionListViewModel", "createSession error", e)
                 _uiState.value = _uiState.value.copy(
@@ -149,19 +150,12 @@ class SessionListViewModel(
                     method = "session.rename",
                     payload = buildJsonObject {
                         put("sessionId", sessionId)
-                        put("name", newName)
+                        put("title", newName)
                     },
                     baseUrl = baseUrl.value
                 )
-                // 更新本地列表
-                val updatedSessions = _uiState.value.sessions.map {
-                    if (it.id == sessionId) {
-                        it.copy(name = newName)
-                    } else {
-                        it
-                    }
-                }
-                _uiState.value = _uiState.value.copy(sessions = updatedSessions)
+                // 重命名后重新加载列表
+                loadFirstPage()
             } catch (e: Exception) {
                 Log.e("SessionListViewModel", "renameSession error", e)
                 _uiState.value = _uiState.value.copy(

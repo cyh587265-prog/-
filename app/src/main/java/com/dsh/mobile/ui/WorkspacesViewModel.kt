@@ -21,6 +21,7 @@ data class WorkspacesUiState(
 class WorkspacesViewModel(
     private val settingsViewModel: SettingsViewModel
 ) : ViewModel() {
+    private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     private val _uiState = MutableStateFlow(WorkspacesUiState())
     val uiState: StateFlow<WorkspacesUiState> = _uiState.asStateFlow()
     val baseUrl = settingsViewModel.baseUrl
@@ -36,7 +37,7 @@ class WorkspacesViewModel(
                 // workspace.list returns { items: [...] } — never a bare array
                 val itemsJson = result["items"]?.jsonArray ?: throw Exception("workspace.list: missing items")
                 val items = itemsJson.map { item ->
-                    Json.decodeFromString(WorkspaceRow.serializer(), item.toString())
+                    json.decodeFromString(WorkspaceRow.serializer(), item.toString())
                 }
                 _uiState.value = _uiState.value.copy(
                     workspaces = items,

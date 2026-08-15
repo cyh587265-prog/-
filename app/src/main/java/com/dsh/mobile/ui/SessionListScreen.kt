@@ -148,11 +148,11 @@ fun SessionListScreen(
                                 SessionItem(
                                     session = session,
                                     onClick = {
-                                        navController.navigate("chat/$workspaceId/${session.id}")
+                                        navController.navigate("chat/$workspaceId/${session.sessionId}")
                                     },
                                     onLongClick = {
-                                        renameSessionId = session.id
-                                        newName = session.name
+                                        renameSessionId = session.sessionId
+                                        newName = sessionDisplayName(session)
                                         showRenameDialog = true
                                     }
                                 )
@@ -232,7 +232,7 @@ fun SessionItem(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    text = session.name,
+                    text = sessionDisplayName(session),
                     style = MaterialTheme.typography.titleMedium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -259,6 +259,20 @@ fun SessionItem(
             }
         }
     }
+}
+private fun sessionDisplayName(session: SessionRow): String {
+    // 会话标题在 projections.values 里（容错提取）
+    val proj = session.projections
+    if (proj is kotlinx.serialization.json.JsonObject) {
+        val values = proj["values"]
+        if (values is kotlinx.serialization.json.JsonObject) {
+            val title = values["title"]
+            if (title is kotlinx.serialization.json.JsonPrimitive && title.content.isNotBlank()) {
+                return title.content
+            }
+        }
+    }
+    return "会话 ${session.sessionId.take(8)}"
 }
 private fun formatTimestamp(timestamp: String): String {
     return try {

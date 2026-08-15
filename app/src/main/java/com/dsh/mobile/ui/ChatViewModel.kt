@@ -127,10 +127,13 @@ class ChatViewModel(
     private fun handleAssistantMessage(payload: JsonObject?) {
         if (payload == null) return
         try {
-            val content = payload["content"]?.jsonArray ?: return
-            val turn = payload["turn"]?.jsonPrimitive?.int
-            val step = payload["step"]?.jsonPrimitive?.int
-            val messageId = payload["messageId"]?.jsonPrimitive?.content
+            // mux frame payload is a WireEvent: content lives under data
+            val data = payload["data"]?.jsonObject ?: payload
+            val content = data["content"]?.jsonArray ?: return
+            val turn = data["turn"]?.jsonPrimitive?.int ?: payload["turn"]?.jsonPrimitive?.int
+            val step = data["step"]?.jsonPrimitive?.int ?: payload["step"]?.jsonPrimitive?.int
+            val messageId = data["id"]?.jsonPrimitive?.content
+                ?: data["messageId"]?.jsonPrimitive?.content
                 ?: "msg_${System.currentTimeMillis()}"
             var text = ""
             var reasoning = ""
@@ -178,12 +181,15 @@ class ChatViewModel(
     private fun handleMessageChunk(payload: JsonObject?) {
         if (payload == null) return
         try {
-            val chunk = payload["chunk"]?.jsonObject ?: return
+            // chunk data lives under WireEvent.data
+            val data = payload["data"]?.jsonObject ?: payload
+            val chunk = data["chunk"]?.jsonObject ?: data
             val type = chunk["type"]?.jsonPrimitive?.content ?: "text"
             val text = chunk["text"]?.jsonPrimitive?.content ?: ""
-            val turn = payload["turn"]?.jsonPrimitive?.int
-            val step = payload["step"]?.jsonPrimitive?.int
-            val messageId = payload["messageId"]?.jsonPrimitive?.content
+            val turn = data["turn"]?.jsonPrimitive?.int ?: payload["turn"]?.jsonPrimitive?.int
+            val step = data["step"]?.jsonPrimitive?.int ?: payload["step"]?.jsonPrimitive?.int
+            val messageId = data["id"]?.jsonPrimitive?.content
+                ?: data["messageId"]?.jsonPrimitive?.content
                 ?: "msg_${System.currentTimeMillis()}_${turn}_${step}"
             val isReasoning = type == "reasoning" || type == "reasoning-delta"
             val isText = type == "text" || type == "text-delta"
@@ -288,13 +294,12 @@ class ChatViewModel(
                     currentMinSeq?.let { put("beforeSeq", it) }
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
-                // 直接从 result 中获取 items
-                val items = result["items"]?.jsonArray ?: run {
-                    // 兼容旧格式
-                    result["value"]?.jsonObject?.get("items")?.jsonArray ?: return@launch
-                }
-                val messages = items.mapNotNull { item ->
-                    parseWireMessageFromJson(item.jsonObject)
+                // session.history value: { events: [{ event: {type,seq,time,data}, view? }], hasMore, projections? }
+                val events = result["events"]?.jsonArray ?: emptyList()
+                val messages = events.mapNotNull { entry ->
+                    val eventObj = entry.jsonObject["event"]?.jsonObject
+                        ?: entry.jsonObject // 容错：兼容直接是 event 的情况
+                    parseWireMessageFromJson(eventObj)
                 }.sortedBy { it.seq }
                 if (messages.isNotEmpty()) {
                     currentMinSeq = messages.first().seq
@@ -396,39 +401,44 @@ class ChatViewModel(
             }
         }
     }
-    private fun parseWireMessageFromJson(obj: JsonObject): ChatMessageUi? {
+    private fun parseWireMessageFromJson(eventObj: JsonObject): ChatMessageUi? {
         try {
-            val id = obj["id"]?.jsonPrimitive?.content ?: return null
-            val kind = obj["kind"]?.jsonPrimitive?.content
-            val content = obj["content"]?.jsonArray ?: return null
-            val seq = obj["seq"]?.jsonPrimitive?.int
-            val turn = obj["turn"]?.jsonPrimitive?.int
-            val step = obj["step"]?.jsonPrimitive?.int
-            val pending = obj["pending"]?.jsonPrimitive?.boolean
+            // WireEvent: { type, seq, time, data }; message content lives in data
+            val seq = eventObj["seq"]?.jsonPrimitive?.intOrNull ?: return null
+            val data = eventObj["data"]?.jsonObject ?: eventObj
+            val content = data["content"]?.jsonArray
             var text = ""
             var reasoning = ""
-            content.forEach { block ->
-                val blockObj = block.jsonObject
-                val type = blockObj["type"]?.jsonPrimitive?.content ?: ""
-                val blockText = blockObj["text"]?.jsonPrimitive?.content ?: ""
-                when (type) {
-                    "text" -> text += blockText
-                    "reasoning" -> reasoning += blockText
+            if (content != null) {
+                content.forEach { block ->
+                    val blockObj = block.jsonObject
+                    val type = blockObj["type"]?.jsonPrimitive?.content ?: ""
+                    val blockText = blockObj["text"]?.jsonPrimitive?.content ?: ""
+                    when (type) {
+                        "text" -> text += blockText
+                        "reasoning" -> reasoning += blockText
+                    }
+                }
+            } else {
+                val raw = data["text"]?.jsonPrimitive?.content ?: ""
+                if (data["kind"]?.jsonPrimitive?.content == "reasoning") {
+                    reasoning = raw
+                } else {
+                    text = raw
                 }
             }
-            val messageKind = when (kind) {
-                "user" -> MessageKind.User
-                "assistant" -> MessageKind.Assistant
-                else -> MessageKind.Assistant
-            }
+            val typeName = eventObj["type"]?.jsonPrimitive?.content ?: ""
+            val kindName = data["kind"]?.jsonPrimitive?.content ?: ""
+            val isUser = typeName.contains("user") || kindName.contains("user")
+            val id = data["id"]?.jsonPrimitive?.content
+                ?: eventObj["id"]?.jsonPrimitive?.content
+                ?: "msg-$seq"
             return ChatMessageUi(
                 id = id,
                 text = text,
                 reasoning = reasoning,
-                kind = messageKind,
-                isPending = pending ?: false,
-                turn = turn,
-                step = step,
+                kind = if (isUser) MessageKind.User else MessageKind.Assistant,
+                isPending = false,
                 seq = seq
             )
         } catch (e: Exception) {

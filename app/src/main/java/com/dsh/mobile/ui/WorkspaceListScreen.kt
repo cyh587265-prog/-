@@ -134,7 +134,7 @@ fun WorkspaceList(
             items(workspaces) { workspace ->
                 WorkspaceItem(
                     workspace = workspace,
-                    onClick = { onWorkspaceClick(workspace.id) }
+                    onClick = { onWorkspaceClick(workspace.workspaceId) }
                 )
             }
         }
@@ -146,9 +146,7 @@ fun WorkspaceItem(
     onClick: () -> Unit
 ) {
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(if (workspace.description != null) 80.dp else 64.dp),
+        modifier = Modifier.fillMaxWidth(),
         onClick = onClick,
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
@@ -159,12 +157,12 @@ fun WorkspaceItem(
             verticalArrangement = Arrangement.Center
         ) {
             Text(
-                text = workspace.name,
+                text = workspace.title ?: workspace.workspaceId,
                 style = MaterialTheme.typography.titleMedium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
-            workspace.description?.let {
+            workspace.path?.let {
                 Text(
                     text = it,
                     style = MaterialTheme.typography.bodySmall,

@@ -18,18 +18,22 @@ data class WireMessage(
 )
 @Serializable
 data class SessionRow(
-    val id: String,
-    val name: String,
-    val workspaceId: String? = null,
+    val sessionId: String,
     val updatedAt: JsonElement? = null,
-    val createdAt: JsonElement? = null,
-    val model: String? = null
+    val running: Boolean = false,
+    val blank: Boolean = false,
+    val cwd: String? = null,
+    val agentPreset: String? = null,
+    val projections: JsonElement? = null
 )
 @Serializable
 data class WorkspaceRow(
-    val id: String,
-    val name: String,
-    val description: String? = null
+    val workspaceId: String,
+    val path: String? = null,
+    val title: String? = null,
+    val sessionIds: List<String> = emptyList(),
+    val createdAt: JsonElement? = null,
+    val updatedAt: JsonElement? = null
 )
 @Serializable
 data class SessionPage(
