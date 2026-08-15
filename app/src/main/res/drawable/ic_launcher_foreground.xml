@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Simple whale-tail-ish / chat mark for DSH Mobile -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M36,44 L72,44 A14,14 0 0 1 86,58 A14,14 0 0 1 72,72 L36,72 A14,14 0 0 1 22,58 A14,14 0 0 1 36,44 Z" />
+    <path
+        android:fillColor="#1A73E8"
+        android:pathData="M42,52 L66,52 L66,56 L42,56 Z M42,62 L60,62 L60,66 L42,66 Z" />
+</vector>
