@@ -52,6 +52,7 @@ import com.dsh.mobile.net.SessionRow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SessionListScreen(
@@ -276,8 +277,9 @@ private fun sessionDisplayName(session: SessionRow): String {
 }
 private fun formatTimestamp(timestamp: String): String {
     return try {
-        // 假设服务端返回的是 ISO 8601 格式
+        // 假设服务端返回的是 ISO 8601 UTC 格式
         val sdf = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US)
+        sdf.timeZone = TimeZone.getTimeZone("UTC")
         val date = sdf.parse(timestamp) ?: return timestamp
         val displayFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
         displayFormat.format(date)

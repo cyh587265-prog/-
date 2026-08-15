@@ -52,6 +52,6 @@ class RpcClient {
             cursor?.let { put("cursor", it) }
         }
         val result = call("session.list", payload, baseUrl)
-        return json.decodeFromString(SessionPage.serializer(), result.toString())
+        return json.decodeFromJsonElement(SessionPage.serializer(), result)
     }
 }

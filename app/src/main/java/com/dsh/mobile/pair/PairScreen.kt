@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import com.dsh.mobile.MainActivity
+import com.dsh.mobile.net.Constants
+import com.dsh.mobile.net.DshHttpClient
 import com.dsh.mobile.net.PairingClient
 import com.dsh.mobile.ui.SettingsViewModel
 import com.journeyapps.barcodescanner.ScanContract
@@ -41,7 +43,8 @@ fun PairScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val baseUrl by settingsViewModel.baseUrl.collectAsStateWithLifecycle()
-    var tokenInput by remember { mutableStateOf("") }
+    var linkInput by remember { mutableStateOf("") }
+    var tokenOnlyInput by remember { mutableStateOf("") }
     var isPairing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var showBaseUrlDialog by remember { mutableStateOf(false) }
@@ -82,10 +85,11 @@ fun PairScreen(
             Toast.makeText(context, "需要相机权限才能扫码", Toast.LENGTH_SHORT).show()
         }
     }
-    // 检查是否已有cookie配对（简化检测：通过baseUrl非空尝试获取，实际可由服务端接口判断）
-    // 此处通过SettingsViewModel或其他方式检测，仅作UI提示
-    var hasPaired by remember { mutableStateOf(false) }
-    // 可扩展真实配对检测，本任务只做UI入口
+    // 检查本地是否已有配对 cookie
+    val hasPaired = remember(baseUrl) {
+        val host = runCatching { Uri.parse(baseUrl).host }.getOrNull()
+        host != null && DshHttpClient.getCookie(host, Constants.COOKIE_NAME) != null
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -157,8 +161,8 @@ fun PairScreen(
             }
             // 手动输入链接
             OutlinedTextField(
-                value = tokenInput,
-                onValueChange = { tokenInput = it },
+                value = linkInput,
+                onValueChange = { linkInput = it },
                 label = { Text("粘贴配对链接或令牌") },
                 placeholder = { Text("https://.../?pair=xxx 或输入令牌") },
                 modifier = Modifier.fillMaxWidth(),
@@ -172,7 +176,7 @@ fun PairScreen(
                         return@Button
                     }
                     handlePairingLink(
-                        tokenInput,
+                        linkInput,
                         baseUrl,
                         scope,
                         context,
@@ -183,14 +187,14 @@ fun PairScreen(
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = tokenInput.isNotBlank() && !isPairing
+                enabled = linkInput.isNotBlank() && !isPairing
             ) {
                 Text("手动配对")
             }
             // 手动输入令牌（仅token，自动拼接到当前baseUrl）
             OutlinedTextField(
-                value = tokenInput,
-                onValueChange = { tokenInput = it },
+                value = tokenOnlyInput,
+                onValueChange = { tokenOnlyInput = it },
                 label = { Text("仅输入令牌 (自动拼接)") },
                 placeholder = { Text("输入令牌，如 AbC123") },
                 modifier = Modifier.fillMaxWidth(),
@@ -203,12 +207,12 @@ fun PairScreen(
                         Toast.makeText(context, "请先设置服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
-                    if (tokenInput.isBlank()) {
+                    if (tokenOnlyInput.isBlank()) {
                         Toast.makeText(context, "请输入令牌", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     // 构造配对链接
-                    val pairLink = "$baseUrl/?pair=$tokenInput"
+                    val pairLink = "$baseUrl/?pair=$tokenOnlyInput"
                     handlePairingLink(
                         pairLink,
                         baseUrl,
@@ -221,7 +225,7 @@ fun PairScreen(
                     )
                 },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = tokenInput.isNotBlank() && !isPairing
+                enabled = tokenOnlyInput.isNotBlank() && !isPairing
             ) {
                 Text("使用令牌配对")
             }

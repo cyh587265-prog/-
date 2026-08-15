@@ -29,6 +29,7 @@ class ChatViewModel(
     private var currentMinSeq: Int? = null
     private val maxMessages = 500
     private var pendingMessageId: String? = null
+    private var sendTimeoutJob: Job? = null
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -69,6 +70,7 @@ class ChatViewModel(
         }
     }
     private fun handleWireMessage(wireMessage: WireMessage) {
+        sendTimeoutJob?.cancel()
         // 按 seq 去重
         val existingSeq = _uiState.value.messages.any { it.seq == wireMessage.seq }
         if (existingSeq) return
@@ -122,6 +124,7 @@ class ChatViewModel(
     }
     private fun handleAssistantMessage(payload: JsonObject?) {
         if (payload == null) return
+        sendTimeoutJob?.cancel()
         try {
             // mux frame payload is a WireEvent: content lives under data
             val data = payload["data"]?.jsonObject ?: payload
@@ -258,8 +261,9 @@ class ChatViewModel(
                 }
                 rpcClient.call("session.prompt", payload, baseUrl)
                 Log.d("ChatViewModel", "Message sent")
-                // 超时兜底：30 秒无消息回推则解除发送中状态，避免 UI 假死
-                viewModelScope.launch {
+                // 超时兜底：30 秒无消息回推则解除发送中状态；收到消息时取消此 job
+                sendTimeoutJob?.cancel()
+                sendTimeoutJob = viewModelScope.launch {
                     delay(30_000)
                     _uiState.update { it.copy(isSending = false) }
                 }

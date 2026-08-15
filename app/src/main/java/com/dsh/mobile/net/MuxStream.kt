@@ -9,6 +9,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -69,23 +70,27 @@ class MuxStream {
         }
     }.flowOn(Dispatchers.IO)
     private fun parseFrame(envelope: ServerEnvelope): MuxFrame? {
-        return when (envelope.type) {
+        // SSE data frames are server-request envelopes: { type: 'server-request', rpcId, payload: WireEvent }.
+        // The real frame type lives inside payload.type (e.g. 'assistant/chunk', 'session/event').
+        val payload = envelope.payload ?: return null
+        val frameType = payload["type"]?.jsonPrimitive?.content ?: return null
+        return when (frameType) {
             "session/event" -> SessionEventFrame(
-                type = envelope.type,
+                type = frameType,
                 rpcId = envelope.rpcId,
-                payload = envelope.payload
+                payload = payload
             )
             "assistant/message" -> AssistantMessageFrame(
-                type = envelope.type,
+                type = frameType,
                 rpcId = envelope.rpcId,
-                payload = envelope.payload
+                payload = payload
             )
             "assistant/chunk", "message/chunk" -> MessageChunkFrame(
-                type = envelope.type,
+                type = frameType,
                 rpcId = envelope.rpcId,
-                payload = envelope.payload
+                payload = payload
             )
-            else -> null // Unknown type, discard
+            else -> null // Unknown frame type, discard
         }
     }
     @kotlinx.serialization.Serializable

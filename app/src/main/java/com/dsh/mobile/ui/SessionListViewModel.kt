@@ -45,7 +45,7 @@ class SessionListViewModel(
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
                 )
-                val page = json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
                     sessions = page.items,
                     hasMore = page.hasMore,
@@ -77,7 +77,7 @@ class SessionListViewModel(
                     },
                     baseUrl = baseUrl.value
                 )
-                val page = json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
                     sessions = _uiState.value.sessions + page.items,
                     hasMore = page.hasMore,
@@ -103,7 +103,7 @@ class SessionListViewModel(
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
                 )
-                val page = json.decodeFromString<SessionPage>(result.toString())
+                val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
                     sessions = page.items,
                     hasMore = page.hasMore,
@@ -130,7 +130,7 @@ class SessionListViewModel(
                     },
                     baseUrl = baseUrl.value
                 )
-                val session = json.decodeFromString<SessionRow>(result.toString())
+                val session = json.decodeFromJsonElement(SessionRow.serializer(), result)
                 // 重新加载列表以显示新会话
                 loadFirstPage()
                 onSuccess(session.sessionId)
