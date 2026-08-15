@@ -7,6 +7,8 @@ import com.dsh.mobile.net.WorkspaceRow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -27,12 +29,14 @@ class WorkspacesViewModel(
     val baseUrl = settingsViewModel.baseUrl
     fun loadWorkspaces() {
         viewModelScope.launch {
+            // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
+            val readyUrl = settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 val result = RpcClient().call(
                     method = "workspace.list",
                     payload = buildJsonObject { },
-                    baseUrl = baseUrl.value
+                    baseUrl = readyUrl
                 )
                 // workspace.list returns { items: [...] } — never a bare array
                 val itemsJson = result["items"]?.jsonArray ?: throw Exception("workspace.list: missing items")

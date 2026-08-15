@@ -35,16 +35,20 @@ class ChatViewModel(
         coerceInputValues = true
     }
     init {
-        loadHistory()
-        startMessageStream()
+        viewModelScope.launch {
+            // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
+            settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
+            loadHistory()
+            startMessageStream()
+        }
     }
     private var streamJob: Job? = null
     private fun startMessageStream() {
         // 防重复订阅：配置变更/重建时避免多个消息流
         if (streamJob?.isActive == true) return
         streamJob = viewModelScope.launch {
-            val baseUrl = settingsViewModel.baseUrl.value
-            if (baseUrl.isBlank()) return@launch
+            // 等待服务器地址就绪（DataStore 异步加载完成）
+            val baseUrl = settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
             // 统一消息入口：Poller 内部 SSE 优先 + 静默检测切轮询，输出完整 WireMessage
             // 关键：消息经 Flow 发射，必须在 collect 里消费（onEvent 参数 Poller 不调用）
             MuxFallbackPoller(rpcClient, baseUrl)

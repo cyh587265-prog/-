@@ -9,6 +9,8 @@ import com.dsh.mobile.net.SessionRow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -29,6 +31,7 @@ class SessionListViewModel(
     private val _uiState = MutableStateFlow(SessionsUiState())
     val uiState: StateFlow<SessionsUiState> = _uiState.asStateFlow()
     val baseUrl = settingsViewModel.baseUrl
+    private suspend fun awaitBaseUrl(): String = settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     fun loadFirstPage() {
         viewModelScope.launch {
@@ -43,7 +46,7 @@ class SessionListViewModel(
                 val result = RpcClient().call(
                     method = "session.list",
                     payload = buildJsonObject { },
-                    baseUrl = baseUrl.value
+                    baseUrl = awaitBaseUrl()
                 )
                 val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
@@ -75,7 +78,7 @@ class SessionListViewModel(
                     payload = buildJsonObject {
                         currentState.nextCursor?.let { put("cursor", it) }
                     },
-                    baseUrl = baseUrl.value
+                    baseUrl = awaitBaseUrl()
                 )
                 val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
@@ -101,7 +104,7 @@ class SessionListViewModel(
                 val result = RpcClient().call(
                     method = "session.list",
                     payload = buildJsonObject { },
-                    baseUrl = baseUrl.value
+                    baseUrl = awaitBaseUrl()
                 )
                 val page = json.decodeFromJsonElement(SessionPage.serializer(), result)
                 _uiState.value = _uiState.value.copy(
@@ -128,7 +131,7 @@ class SessionListViewModel(
                     payload = buildJsonObject {
                         put("workspaceId", workspaceId)
                     },
-                    baseUrl = baseUrl.value
+                    baseUrl = awaitBaseUrl()
                 )
                 val session = json.decodeFromJsonElement(SessionRow.serializer(), result)
                 // 重新加载列表以显示新会话
@@ -152,7 +155,7 @@ class SessionListViewModel(
                         put("sessionId", sessionId)
                         put("title", newName)
                     },
-                    baseUrl = baseUrl.value
+                    baseUrl = awaitBaseUrl()
                 )
                 // 重命名后重新加载列表
                 loadFirstPage()
