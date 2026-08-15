@@ -47,30 +47,34 @@ class MuxFallbackPoller(
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
                 // session.history value: { events: [{ event: {type,seq,time,data}, view? }], hasMore }
+                // Only complete messages count: user/message -> data.content, assistant/message -> data.message.content
                 val events = result["events"]?.jsonArray ?: return
                 val messages = events.mapNotNull { entry ->
                     val eventObj = entry.jsonObject["event"]?.jsonObject ?: return@mapNotNull null
-                    val data = eventObj["data"]?.jsonObject ?: return@mapNotNull null
+                    val type = eventObj["type"]?.jsonPrimitive?.content ?: return@mapNotNull null
                     val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return@mapNotNull null
-                    val content = data["content"]?.jsonArray
+                    val data = eventObj["data"]?.jsonObject ?: return@mapNotNull null
+                    val isUser = type == "user/message"
+                    val isAssistant = type == "assistant/message"
+                    if (!isUser && !isAssistant) return@mapNotNull null
+                    val content = if (isUser) {
+                        data["content"]?.jsonArray
+                    } else {
+                        data["message"]?.jsonObject?.get("content")?.jsonArray
+                    } ?: return@mapNotNull null
                     var text = ""
                     var reasoning = ""
-                    if (content != null) {
-                        content.forEach { block ->
-                            val b = block.jsonObject
-                            when (b["type"]?.jsonPrimitive?.content) {
-                                "text" -> text += b["text"]?.jsonPrimitive?.content ?: ""
-                                "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
-                            }
+                    content.forEach { block ->
+                        val b = block.jsonObject
+                        when (b["type"]?.jsonPrimitive?.content) {
+                            "text" -> text += b["text"]?.jsonPrimitive?.content ?: ""
+                            "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
                         }
-                    } else {
-                        val raw = data["text"]?.jsonPrimitive?.content ?: ""
-                        if (data["kind"]?.jsonPrimitive?.content == "reasoning") reasoning = raw else text = raw
                     }
-                    val isUser = (eventObj["type"]?.jsonPrimitive?.content ?: "").contains("user")
-                        || (data["kind"]?.jsonPrimitive?.content ?: "").contains("user")
                     WireMessage(
-                        id = data["id"]?.jsonPrimitive?.content ?: "msg-$seq",
+                        id = data["id"]?.jsonPrimitive?.content
+                            ?: data["message"]?.jsonObject?.get("id")?.jsonPrimitive?.content
+                            ?: "msg-$seq",
                         seq = seq,
                         kind = if (isUser) "user" else "assistant",
                         content = listOf(ContentBlock("text", text)),

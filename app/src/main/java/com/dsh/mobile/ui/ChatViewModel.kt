@@ -29,6 +29,7 @@ class ChatViewModel(
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
     private var currentMinSeq: Int? = null
     private val maxMessages = 500
+    private val HISTORY_PAGE_SIZE = 30
     private var pendingMessageId: String? = null
     private var sendTimeoutJob: Job? = null
     private val json = Json {
@@ -127,13 +128,14 @@ class ChatViewModel(
         if (payload == null) return
         sendTimeoutJob?.cancel()
         try {
-            // mux frame payload is a WireEvent: content lives under data
+            // mux frame payload is a WireEvent: assistant message content lives at data.message.content
             val data = payload["data"]?.jsonObject ?: payload
-            val content = data["content"]?.jsonArray ?: return
+            val messageObj = data["message"]?.jsonObject
+            val content = messageObj?.get("content")?.jsonArray ?: return
             val turn = data["turn"]?.jsonPrimitive?.int ?: payload["turn"]?.jsonPrimitive?.int
             val step = data["step"]?.jsonPrimitive?.int ?: payload["step"]?.jsonPrimitive?.int
-            val messageId = data["id"]?.jsonPrimitive?.content
-                ?: data["messageId"]?.jsonPrimitive?.content
+            val messageId = messageObj["id"]?.jsonPrimitive?.content
+                ?: data["id"]?.jsonPrimitive?.content
                 ?: "msg_${System.currentTimeMillis()}"
             var text = ""
             var reasoning = ""
@@ -301,12 +303,19 @@ class ChatViewModel(
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
                 // session.history value: { events: [{ event: {type,seq,time,data}, view? }], hasMore, projections? }
+                // NOTE: server ignores maxMessages and returns ALL events (chunk/tool noise included).
+                // Parse only complete messages, keep the most recent PAGE_SIZE.
                 val events = result["events"]?.jsonArray ?: emptyList()
-                val messages = events.mapNotNull { entry ->
+                val parsed = events.mapNotNull { entry ->
                     val eventObj = entry.jsonObject["event"]?.jsonObject
                         ?: entry.jsonObject // 容错：兼容直接是 event 的情况
                     parseWireMessageFromJson(eventObj)
                 }.sortedBy { it.seq }
+                val messages = if (parsed.size > HISTORY_PAGE_SIZE) {
+                    parsed.takeLast(HISTORY_PAGE_SIZE)
+                } else {
+                    parsed
+                }
                 if (messages.isNotEmpty()) {
                     currentMinSeq = messages.first().seq
                 }
@@ -316,7 +325,7 @@ class ChatViewModel(
                     state.copy(
                         messages = newMessages + state.messages,
                         isLoadingHistory = false,
-                        hasMoreHistory = result["hasMore"]?.jsonPrimitive?.boolean ?: (messages.size >= 30)
+                        hasMoreHistory = parsed.size > HISTORY_PAGE_SIZE
                     )
                 }
                 limitMessages()
@@ -409,35 +418,33 @@ class ChatViewModel(
     }
     private fun parseWireMessageFromJson(eventObj: JsonObject): ChatMessageUi? {
         try {
-            // WireEvent: { type, seq, time, data }; message content lives in data
-            val seq = eventObj["seq"]?.jsonPrimitive?.intOrNull ?: return null
-            val data = eventObj["data"]?.jsonObject ?: eventObj
-            val content = data["content"]?.jsonArray
+            // WireEvent: { type, seq, time, data }
+            val typeName = eventObj["type"]?.jsonPrimitive?.content ?: return null
+            val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return null
+            val data = eventObj["data"]?.jsonObject ?: return null
+            // Only complete messages: user/message content is data.content,
+            // assistant/message content is data.message.content (asymmetric!)
+            val isUser = typeName == "user/message"
+            val isAssistant = typeName == "assistant/message"
+            if (!isUser && !isAssistant) return null
+            val content = if (isUser) {
+                data["content"]?.jsonArray
+            } else {
+                data["message"]?.jsonObject?.get("content")?.jsonArray
+            } ?: return null
             var text = ""
             var reasoning = ""
-            if (content != null) {
-                content.forEach { block ->
-                    val blockObj = block.jsonObject
-                    val type = blockObj["type"]?.jsonPrimitive?.content ?: ""
-                    val blockText = blockObj["text"]?.jsonPrimitive?.content ?: ""
-                    when (type) {
-                        "text" -> text += blockText
-                        "reasoning" -> reasoning += blockText
-                    }
-                }
-            } else {
-                val raw = data["text"]?.jsonPrimitive?.content ?: ""
-                if (data["kind"]?.jsonPrimitive?.content == "reasoning") {
-                    reasoning = raw
-                } else {
-                    text = raw
+            content.forEach { block ->
+                val blockObj = block.jsonObject
+                val type = blockObj["type"]?.jsonPrimitive?.content ?: ""
+                val blockText = blockObj["text"]?.jsonPrimitive?.content ?: ""
+                when (type) {
+                    "text" -> text += blockText
+                    "reasoning" -> reasoning += blockText
                 }
             }
-            val typeName = eventObj["type"]?.jsonPrimitive?.content ?: ""
-            val kindName = data["kind"]?.jsonPrimitive?.content ?: ""
-            val isUser = typeName.contains("user") || kindName.contains("user")
             val id = data["id"]?.jsonPrimitive?.content
-                ?: eventObj["id"]?.jsonPrimitive?.content
+                ?: data["message"]?.jsonObject?.get("id")?.jsonPrimitive?.content
                 ?: "msg-$seq"
             return ChatMessageUi(
                 id = id,
