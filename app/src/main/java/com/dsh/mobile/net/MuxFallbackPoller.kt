@@ -1,4 +1,5 @@
 package com.dsh.mobile.net
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.*
@@ -12,6 +13,10 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+/**
+ * Single message entry point: SSE first, silent-detection fallback to polling.
+ * Outputs complete WireMessage only (user/message + assistant/message).
+ */
 class MuxFallbackPoller(
     private val rpcClient: RpcClient,
     private val baseUrl: String
@@ -21,12 +26,52 @@ class MuxFallbackPoller(
     private var lastSeq = AtomicLong(0L)
     private var streamJob: Job? = null
     private var pollerJob: Job? = null
-    private var isStreaming = true
+
+    /** Parse a WireEvent ({type,seq,time,data}) into a complete WireMessage, or null for noise. */
+    private fun parseWireEvent(eventObj: JsonObject): WireMessage? {
+        return try {
+            val type = eventObj["type"]?.jsonPrimitive?.content ?: return null
+            val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return null
+            val data = eventObj["data"]?.jsonObject ?: return null
+            val isUser = type == "user/message"
+            val isAssistant = type == "assistant/message"
+            if (!isUser && !isAssistant) return null
+            val content = if (isUser) {
+                data["content"]?.jsonArray
+            } else {
+                data["message"]?.jsonObject?.get("content")?.jsonArray
+            } ?: return null
+            var text = ""
+            var reasoning = ""
+            content.forEach { block ->
+                val b = block.jsonObject
+                when (b["type"]?.jsonPrimitive?.content) {
+                    "text" -> text += b["text"]?.jsonPrimitive?.content ?: ""
+                    "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
+                }
+            }
+            WireMessage(
+                id = data["id"]?.jsonPrimitive?.content
+                    ?: data["message"]?.jsonObject?.get("id")?.jsonPrimitive?.content
+                    ?: "msg-$seq",
+                seq = seq,
+                kind = if (isUser) "user" else "assistant",
+                content = listOf(ContentBlock("text", text), ContentBlock("reasoning", reasoning)),
+                pending = false
+            )
+        } catch (e: Exception) {
+            Log.w("MuxFallbackPoller", "parseWireEvent failed", e)
+            null
+        }
+    }
+
     fun observe(
         sessionId: String,
         onEvent: suspend (WireMessage) -> Unit
     ): Flow<WireMessage> = callbackFlow {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        val lastDataTime = AtomicLong(System.currentTimeMillis())
+
         suspend fun processMessages(messages: List<WireMessage>) {
             val newMessages = messages
                 .filter { !seenSeqs.containsKey(it.seq) }
@@ -39,6 +84,7 @@ class MuxFallbackPoller(
                 trySend(msg)
             }
         }
+
         suspend fun pollHistory() {
             try {
                 val payload = buildJsonObject {
@@ -46,89 +92,62 @@ class MuxFallbackPoller(
                     put("maxMessages", 50)
                 }
                 val result = rpcClient.call("session.history", payload, baseUrl)
-                // session.history value: { events: [{ event: {type,seq,time,data}, view? }], hasMore }
-                // Only complete messages count: user/message -> data.content, assistant/message -> data.message.content
                 val events = result["events"]?.jsonArray ?: return
                 val messages = events.mapNotNull { entry ->
-                    val eventObj = entry.jsonObject["event"]?.jsonObject ?: return@mapNotNull null
-                    val type = eventObj["type"]?.jsonPrimitive?.content ?: return@mapNotNull null
-                    val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return@mapNotNull null
-                    val data = eventObj["data"]?.jsonObject ?: return@mapNotNull null
-                    val isUser = type == "user/message"
-                    val isAssistant = type == "assistant/message"
-                    if (!isUser && !isAssistant) return@mapNotNull null
-                    val content = if (isUser) {
-                        data["content"]?.jsonArray
-                    } else {
-                        data["message"]?.jsonObject?.get("content")?.jsonArray
-                    } ?: return@mapNotNull null
-                    var text = ""
-                    var reasoning = ""
-                    content.forEach { block ->
-                        val b = block.jsonObject
-                        when (b["type"]?.jsonPrimitive?.content) {
-                            "text" -> text += b["text"]?.jsonPrimitive?.content ?: ""
-                            "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
-                        }
-                    }
-                    WireMessage(
-                        id = data["id"]?.jsonPrimitive?.content
-                            ?: data["message"]?.jsonObject?.get("id")?.jsonPrimitive?.content
-                            ?: "msg-$seq",
-                        seq = seq,
-                        kind = if (isUser) "user" else "assistant",
-                        content = listOf(ContentBlock("text", text)),
-                        pending = false
-                    )
-                }
+                    val eventObj = entry.jsonObject["event"]?.jsonObject
+                        ?: entry.jsonObject
+                    parseWireEvent(eventObj)
+                }.filter { it.seq > lastSeq.get() }  // incremental
                 processMessages(messages)
             } catch (e: Exception) {
-                // Polling failed, continue
+                Log.w("MuxFallbackPoller", "pollHistory failed", e)
             }
         }
-        // Start SSE stream
+
+        fun startPoller(intervalMs: Long) {
+            pollerJob?.cancel()
+            pollerJob = scope.launch {
+                while (isActive) {
+                    delay(intervalMs)
+                    pollHistory()
+                }
+            }
+        }
+
+        // SSE main channel: emit complete messages only; chunk frames keep the channel alive
         streamJob = scope.launch {
             try {
-                val muxStream = MuxStream()
-                muxStream.connect(baseUrl).collect { frame ->
-                    isStreaming = true
-                    // Extract message from frame and convert to WireMessage
-                    // For now, we just forward through the flow
-                    // This is a simplified implementation - full message parsing
-                    // would be more complex and is handled in the chat subtask
-                    // We just pass the raw frame data
-                }
-            } catch (e: Exception) {
-                isStreaming = false
-                // Fallback to polling
-                pollerJob = scope.launch {
-                    while (isActive) {
-                        delay(3000)
-                        pollHistory()
+                MuxStream().connect(baseUrl).collect { frame ->
+                    lastDataTime.set(System.currentTimeMillis())
+                    when (frame) {
+                        is AssistantMessageFrame -> {
+                            parseWireEvent(frame.payload ?: return@collect).let { msg ->
+                                if (msg != null) processMessages(listOf(msg))
+                            }
+                        }
+                        is MessageChunkFrame -> { /* streamed deltas ignored; complete message follows */ }
+                        is SessionEventFrame -> { }
                     }
                 }
+            } catch (e: Exception) {
+                Log.w("MuxFallbackPoller", "SSE stream ended", e)
             }
         }
-        // 静默检测：SSE 连接在公网隧道下可能保持但零字节（quick tunnel 不透传 SSE）。
-        // 每 3 秒检查一次，一旦 SSE 无任何产出就启动轮询兜底（循环检测直到轮询真正启动，
-        // 避免网络抖动导致轮询启动失败后永久失去兜底）。
+
+        // Silent detection: SSE stays open but zero bytes under quick tunnels.
+        // Every 3s, if no SSE data for 5s, switch to polling (loop until started).
         scope.launch {
             var pollStarted = false
             while (isActive && !pollStarted) {
                 delay(3000)
-                if (lastSeq.get() == 0L) {
+                if (System.currentTimeMillis() - lastDataTime.get() > 5000) {
                     pollStarted = true
-                    isStreaming = false
                     streamJob?.cancel()
-                    pollerJob = scope.launch {
-                        while (isActive) {
-                            delay(2000)
-                            pollHistory()
-                        }
-                    }
+                    startPoller(2000)
                 }
             }
         }
+
         awaitClose {
             streamJob?.cancel()
             pollerJob?.cancel()

@@ -45,30 +45,10 @@ class ChatViewModel(
         viewModelScope.launch {
             val baseUrl = settingsViewModel.baseUrl.value
             if (baseUrl.isBlank()) return@launch
-            // SSE 流：消息主通道（解析帧）
-            launch {
-                MuxStream().connect(baseUrl)
-                    .catch { e -> Log.e("ChatViewModel", "SSE stream error", e) }
-                    .collect { frame ->
-                        when (frame) {
-                            is SessionEventFrame -> {
-                                Log.d("ChatViewModel", "Session event: ${frame.type}")
-                            }
-                            is AssistantMessageFrame -> {
-                                handleAssistantMessage(frame.payload)
-                            }
-                            is MessageChunkFrame -> {
-                                handleMessageChunk(frame.payload)
-                            }
-                        }
-                    }
-            }
-            // 轮询兜底：Poller 内部 SSE 断流后自动轮询 history，输出 WireMessage
-            launch {
-                MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
-                    handleWireMessage(wireMessage)
-                }.catch { e -> Log.e("ChatViewModel", "Fallback poller error", e) }.collect { }
-            }
+            // 统一消息入口：Poller 内部 SSE 优先 + 静默检测切轮询，输出完整 WireMessage
+            MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
+                handleWireMessage(wireMessage)
+            }.catch { e -> Log.e("ChatViewModel", "Message stream error", e) }.collect { }
         }
     }
     private fun handleWireMessage(wireMessage: WireMessage) {
