@@ -1,5 +1,6 @@
 package com.dsh.mobile.net
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonElement
 @Serializable
 data class ContentBlock(
     val type: String, // "text" or "reasoning"
@@ -20,8 +21,8 @@ data class SessionRow(
     val id: String,
     val name: String,
     val workspaceId: String? = null,
-    val updatedAt: String? = null,
-    val createdAt: String? = null,
+    val updatedAt: JsonElement? = null,
+    val createdAt: JsonElement? = null,
     val model: String? = null
 )
 @Serializable

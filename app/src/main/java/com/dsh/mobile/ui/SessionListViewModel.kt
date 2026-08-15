@@ -39,7 +39,7 @@ class SessionListViewModel(
                 nextCursor = null
             )
             try {
-                val result = RpcClient.call(
+                val result = RpcClient().call(
                     method = "session.list",
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
@@ -69,7 +69,7 @@ class SessionListViewModel(
         viewModelScope.launch {
             _uiState.value = currentState.copy(isLoadingMore = true)
             try {
-                val result = RpcClient.call(
+                val result = RpcClient().call(
                     method = "session.list",
                     payload = buildJsonObject {
                         currentState.nextCursor?.let { put("cursor", it) }
@@ -97,7 +97,7 @@ class SessionListViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isRefreshing = true, error = null)
             try {
-                val result = RpcClient.call(
+                val result = RpcClient().call(
                     method = "session.list",
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value
@@ -122,7 +122,7 @@ class SessionListViewModel(
     fun createSession(onSuccess: (String) -> Unit) {
         viewModelScope.launch {
             try {
-                val result = RpcClient.call(
+                val result = RpcClient().call(
                     method = "session.create",
                     payload = buildJsonObject {
                         put("workspaceId", workspaceId)
@@ -145,7 +145,7 @@ class SessionListViewModel(
         if (newName.isBlank()) return
         viewModelScope.launch {
             try {
-                RpcClient.call(
+                RpcClient().call(
                     method = "session.rename",
                     payload = buildJsonObject {
                         put("sessionId", sessionId)

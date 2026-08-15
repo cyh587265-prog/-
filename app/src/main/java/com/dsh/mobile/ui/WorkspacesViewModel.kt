@@ -28,7 +28,7 @@ class WorkspacesViewModel(
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
-                val result = RpcClient.call(
+                val result = RpcClient().call(
                     method = "workspace.list",
                     payload = buildJsonObject { },
                     baseUrl = baseUrl.value

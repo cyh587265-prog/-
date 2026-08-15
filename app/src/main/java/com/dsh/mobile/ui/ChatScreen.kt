@@ -1,5 +1,4 @@
 package com.dsh.mobile.ui
-import android.os.Parcelable
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -22,12 +21,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
-import kotlinx.parcelize.Parcelize
-@Parcelize
 data class ChatScreenArgs(
     val workspaceId: String,
     val sessionId: String
-) : Parcelable
+)
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChatScreen(
@@ -176,7 +173,19 @@ fun ChatScreen(
                 OutlinedTextField(
                     value = uiState.inputText,
                     onValueChange = { viewModel.updateInputText(it) },
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier
+                        .weight(1f)
+                        .onPreviewKeyEvent { event ->
+                            if (event.key == Key.Enter && !event.isShiftPressed) {
+                                if (uiState.inputText.isNotBlank()) {
+                                    viewModel.sendMessage(uiState.inputText)
+                                    focusManager.clearFocus()
+                                }
+                                true
+                            } else {
+                                false
+                            }
+                        },
                     placeholder = { Text("输入消息...") },
                     enabled = !uiState.isSending,
                     maxLines = 5,
@@ -190,18 +199,7 @@ fun ChatScreen(
                                 focusManager.clearFocus()
                             }
                         }
-                    ),
-                    onPreviewKeyEvent = { event ->
-                        if (event.key == Key.Enter && !event.isShiftPressed) {
-                            if (uiState.inputText.isNotBlank()) {
-                                viewModel.sendMessage(uiState.inputText)
-                                focusManager.clearFocus()
-                            }
-                            true
-                        } else {
-                            false
-                        }
-                    }
+                    )
                 )
                 Button(
                     onClick = {
@@ -367,7 +365,7 @@ fun ModelSelectionDialog(
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
                                 Text(model.name)
-                                Icon(Icons.Default.ChevronRight, contentDescription = null)
+                                Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
                             }
                             if (showEffortDialog) {
                                 ReasoningEffortDialog(

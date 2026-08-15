@@ -45,7 +45,7 @@ class ChatViewModel(
                 val muxStream = MuxStream()
                 val streamFlow = muxStream.connect(baseUrl)
                 // Poller 作为兜底
-                val pollerFlow = MuxFallbackPoller.observe(sessionId) { wireMessage ->
+                val pollerFlow = MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
                     // 收到 WireMessage 时处理
                     handleWireMessage(wireMessage)
                 }
