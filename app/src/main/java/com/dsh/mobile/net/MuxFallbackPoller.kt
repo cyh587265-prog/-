@@ -22,10 +22,6 @@ class MuxFallbackPoller(
     private val baseUrl: String
 ) {
     private val json = Json { ignoreUnknownKeys = true }
-    private val seenSeqs = ConcurrentHashMap<Int, Boolean>()
-    private var lastSeq = AtomicLong(0L)
-    private var streamJob: Job? = null
-    private var pollerJob: Job? = null
 
     /** Parse a WireEvent ({type,seq,time,data}) into a complete WireMessage, or null for noise. */
     private fun parseWireEvent(eventObj: JsonObject): WireMessage? {
@@ -71,17 +67,22 @@ class MuxFallbackPoller(
     ): Flow<WireMessage> = callbackFlow {
         val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
         val lastDataTime = AtomicLong(System.currentTimeMillis())
+        // Per-observe dedup state (session-scoped, cleared on new observe)
+        val seenSeqs = mutableSetOf<Int>()
+        val lastSeq = AtomicLong(0L)
+        var streamJob: Job? = null
+        var pollerJob: Job? = null
 
         suspend fun processMessages(messages: List<WireMessage>) {
             val newMessages = messages
-                .filter { !seenSeqs.containsKey(it.seq) }
+                .filter { it.seq !in seenSeqs }
                 .sortedBy { it.seq }
-            newMessages.forEach { msg ->
-                seenSeqs[msg.seq] = true
-                if (msg.seq > lastSeq.get()) {
-                    lastSeq.set(msg.seq.toLong())
+            for (msg in newMessages) {
+                // Advance watermark only after the message is accepted into the channel
+                if (trySend(msg).isSuccess) {
+                    seenSeqs.add(msg.seq)
+                    if (msg.seq > lastSeq.get()) lastSeq.set(msg.seq.toLong())
                 }
-                trySend(msg)
             }
         }
 
@@ -114,23 +115,26 @@ class MuxFallbackPoller(
             }
         }
 
-        // SSE main channel: emit complete messages only; chunk frames keep the channel alive
+        // SSE main channel: emit complete messages only; reconnect on drop (LAN flake recovery)
         streamJob = scope.launch {
-            try {
-                MuxStream().connect(baseUrl).collect { frame ->
-                    lastDataTime.set(System.currentTimeMillis())
-                    when (frame) {
-                        is AssistantMessageFrame -> {
-                            parseWireEvent(frame.payload ?: return@collect).let { msg ->
-                                if (msg != null) processMessages(listOf(msg))
+            while (isActive) {
+                try {
+                    MuxStream().connect(baseUrl).collect { frame ->
+                        lastDataTime.set(System.currentTimeMillis())
+                        when (frame) {
+                            is AssistantMessageFrame -> {
+                                parseWireEvent(frame.payload ?: return@collect)?.let { msg ->
+                                    processMessages(listOf(msg))
+                                }
                             }
+                            is MessageChunkFrame -> { /* streamed deltas ignored; complete message follows */ }
+                            is SessionEventFrame -> { }
                         }
-                        is MessageChunkFrame -> { /* streamed deltas ignored; complete message follows */ }
-                        is SessionEventFrame -> { }
                     }
+                } catch (e: Exception) {
+                    Log.w("MuxFallbackPoller", "SSE stream ended, reconnect in 1s", e)
                 }
-            } catch (e: Exception) {
-                Log.w("MuxFallbackPoller", "SSE stream ended", e)
+                if (isActive) delay(1000)
             }
         }
 

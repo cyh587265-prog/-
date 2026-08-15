@@ -28,9 +28,10 @@ class MuxStream {
             .url("$baseUrl${Constants.MUX_EVENTS_PATH}")
             .get()
             .build()
+        val call = streamClient.newCall(request)
         var response: Response? = null
         try {
-            response = streamClient.newCall(request).execute()
+            response = call.execute()
             if (!response.isSuccessful) {
                 close(Exception("SSE connection failed: ${response.code}"))
                 return@callbackFlow
@@ -66,6 +67,7 @@ class MuxStream {
             response?.close()
         }
         awaitClose {
+            call.cancel()  // 主动取消，释放阻塞的 readUtf8Line
             response?.close()
         }
     }.flowOn(Dispatchers.IO)

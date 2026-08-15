@@ -187,7 +187,7 @@ fun ChatScreen(
                             }
                         },
                     placeholder = { Text("输入消息...") },
-                    enabled = !uiState.isSending,
+                    enabled = true,
                     maxLines = 5,
                     keyboardOptions = KeyboardOptions(
                         imeAction = ImeAction.Send
@@ -208,7 +208,7 @@ fun ChatScreen(
                             focusManager.clearFocus()
                         }
                     },
-                    enabled = !uiState.isSending && uiState.inputText.isNotBlank()
+                    enabled = uiState.inputText.isNotBlank()
                 ) {
                     if (uiState.isSending) {
                         CircularProgressIndicator(
