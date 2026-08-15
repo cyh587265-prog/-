@@ -120,17 +120,14 @@ class MuxFallbackPoller(
             while (isActive) {
                 try {
                     MuxStream().connect(baseUrl).collect { frame ->
-                        lastDataTime.set(System.currentTimeMillis())
                         // 会话隔离：帧 payload 若带 sessionId，只处理当前会话的
                         val frameSessionId = frame.payload?.get("sessionId")?.jsonPrimitive?.content
                         if (frameSessionId != null && frameSessionId != sessionId) return@collect
                         when (frame) {
-                            is UserMessageFrame -> {
-                                parseWireEvent(frame.payload ?: return@collect)?.let { msg ->
-                                    processMessages(listOf(msg))
-                                }
-                            }
-                            is AssistantMessageFrame -> {
+                            is UserMessageFrame, is AssistantMessageFrame -> {
+                                // 只有有效消息帧才算 SSE 活跃（控制帧如 session/subscribed 不算，
+                                // 否则公网隧道下控制帧照常到达、消息帧不透传时会阻止轮询降级）
+                                lastDataTime.set(System.currentTimeMillis())
                                 parseWireEvent(frame.payload ?: return@collect)?.let { msg ->
                                     processMessages(listOf(msg))
                                 }
