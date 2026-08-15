@@ -42,9 +42,11 @@ class ChatViewModel(
             val baseUrl = settingsViewModel.baseUrl.value
             if (baseUrl.isBlank()) return@launch
             // 统一消息入口：Poller 内部 SSE 优先 + 静默检测切轮询，输出完整 WireMessage
-            MuxFallbackPoller(rpcClient, baseUrl).observe(sessionId) { wireMessage ->
-                handleWireMessage(wireMessage)
-            }.catch { e -> Log.e("ChatViewModel", "Message stream error", e) }.collect { }
+            // 关键：消息经 Flow 发射，必须在 collect 里消费（onEvent 参数 Poller 不调用）
+            MuxFallbackPoller(rpcClient, baseUrl)
+                .observe(sessionId) { /* onEvent unused; flow is the channel */ }
+                .catch { e -> Log.e("ChatViewModel", "Message stream error", e) }
+                .collect { wireMessage -> handleWireMessage(wireMessage) }
         }
     }
     private fun handleWireMessage(wireMessage: WireMessage) {
