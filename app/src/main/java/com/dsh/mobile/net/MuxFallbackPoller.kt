@@ -109,16 +109,22 @@ class MuxFallbackPoller(
                 }
             }
         }
-        // Start polling as backup if SSE doesn't produce data within 12s
+        // 静默检测：SSE 连接在公网隧道下可能保持但零字节（quick tunnel 不透传 SSE）。
+        // 每 3 秒检查一次，一旦 SSE 无任何产出就启动轮询兜底（循环检测直到轮询真正启动，
+        // 避免网络抖动导致轮询启动失败后永久失去兜底）。
         scope.launch {
-            delay(12000)
-            if (lastSeq.get() == 0L) {
-                isStreaming = false
-                streamJob?.cancel()
-                pollerJob = scope.launch {
-                    while (isActive) {
-                        delay(3000)
-                        pollHistory()
+            var pollStarted = false
+            while (isActive && !pollStarted) {
+                delay(3000)
+                if (lastSeq.get() == 0L) {
+                    pollStarted = true
+                    isStreaming = false
+                    streamJob?.cancel()
+                    pollerJob = scope.launch {
+                        while (isActive) {
+                            delay(2000)
+                            pollHistory()
+                        }
                     }
                 }
             }
