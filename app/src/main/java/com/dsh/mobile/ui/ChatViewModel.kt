@@ -39,8 +39,7 @@ class ChatViewModel(
         startMessageStream()
     }
     private fun startMessageStream() {
-        streamJob?.cancel()
-        streamJob = viewModelScope.launch {
+        viewModelScope.launch {
             val baseUrl = settingsViewModel.baseUrl.value
             if (baseUrl.isBlank()) return@launch
             // SSE 流：消息主通道（解析帧）

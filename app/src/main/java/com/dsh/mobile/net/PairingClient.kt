@@ -23,7 +23,7 @@ class PairingClient {
                 .post(bodyJson.toRequestBody("application/json".toMediaType()))
                 .build()
             val response = DshHttpClient.client.newCall(request).execute()
-            val responseBody = response.body?.string() ?: return Result.failure(Exception("Empty response"))
+            val responseBody = response.body?.string() ?: return@withContext Result.failure(Exception("Empty response"))
             when (response.code) {
                 200 -> {
                     val parsed = json.decodeFromString(PairAcceptResponse.serializer(), responseBody)
