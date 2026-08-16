@@ -12,4 +12,3 @@ data class ChunkDelta(
     val kind: String,      // "text" | "reasoning"
     val text: String       // 本次增量文本
 )
-2. MessageEvent.kt（新建）

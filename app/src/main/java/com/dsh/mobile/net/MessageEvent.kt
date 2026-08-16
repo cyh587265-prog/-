@@ -9,4 +9,3 @@ sealed interface MessageEvent {
     /** 增量块（助手流式输出） */
     data class Chunk(val delta: ChunkDelta) : MessageEvent
 }
-3. 改造后的 MuxFallbackPoller.kt

@@ -420,3 +420,35 @@ fun ReasoningEffortDialog(
 快速
 进阶
 内容由AI生成，请仔细甄别
+
+enum class MessageKind {
+    User, Assistant
+}
+data class ChatMessageUi(
+    val id: String,
+    val text: String,
+    val reasoning: String,
+    val kind: MessageKind,
+    val isPending: Boolean = false,
+    val turn: Int? = null,
+    val step: Int? = null,
+    val seq: Int? = null
+)
+data class ModelItem(
+    val id: String,
+    val name: String,
+    val provider: String,
+    val defaultEffort: String? = null
+)
+data class ChatUiState(
+    val messages: List<ChatMessageUi> = emptyList(),
+    val inputText: String = "",
+    val isSending: Boolean = false,
+    val isLoadingHistory: Boolean = false,
+    val hasMoreHistory: Boolean = true,
+    val currentModel: String? = null,
+    val models: Map<String, List<ModelItem>> = emptyMap(),
+    val isLoadingModels: Boolean = false,
+    val showModelDialog: Boolean = false,
+    val error: String? = null
+)
