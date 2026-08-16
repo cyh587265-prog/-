@@ -140,7 +140,7 @@ class ChatViewModel(
             kind = kind,
             isPending = false,
             turn = turn,
-            step = step,
+            step = wireMessage.step,
             seq = wireMessage.seq
         )
         _uiState.update { state ->
