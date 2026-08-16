@@ -274,7 +274,8 @@ class MuxFallbackPoller(
                         // 完整消息
                         type == "user/message" || type == "assistant/message" -> {
                             parseWireEvent(eventObj)?.let { msg ->
-                                if (msg.seq !in seenSeqs) {
+                                // 只推新消息：seq 大于已处理水位的才加入（避免每次轮询重复推旧历史）
+                                if (msg.seq !in seenSeqs && msg.seq > lastSeq.get()) {
                                     fullMessages.add(msg)
                                 }
                             }

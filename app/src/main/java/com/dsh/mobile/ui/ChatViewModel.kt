@@ -119,7 +119,10 @@ class ChatViewModel(
                 // 替换同 id 的 pending 消息
                 state.messages.map { if (it.id == pending.id) message else it }
             } else {
-                state.messages + message
+                // 按 seq 排序合并，保证顺序（轮询可能带来更早/更晚的消息）
+                (state.messages + message).sortedWith(
+                    compareBy<ChatMessageUi> { it.seq ?: Int.MAX_VALUE }
+                )
             }
             // 多轮生成：isSending 跟随剩余 pending 数
             state.copy(messages = newMessages, isSending = pendingByTurnStep.isNotEmpty())
