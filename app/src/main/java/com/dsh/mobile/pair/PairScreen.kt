@@ -88,7 +88,7 @@ fun PairScreen(
         result.contents?.let { rawResult ->
             handlePairingLink(
                 rawResult,
-                currentUrl,
+                currentUrl.orEmpty(),
                 scope,
                 context,
                 navController,
@@ -143,7 +143,7 @@ fun PairScreen(
         ) {
             // ===== 服务器地址管理区域 =====
             ServerAddressCard(
-                currentUrl = currentUrl,
+                currentUrl = currentUrl.orEmpty(),
                 urls = urls,
                 isReachable = isReachable,
                 isChecking = isChecking,
@@ -202,7 +202,7 @@ fun PairScreen(
                     }
                     handlePairingLink(
                         linkInput,
-                        currentUrl,
+                        currentUrl.orEmpty(),
                         scope,
                         context,
                         navController,
@@ -239,7 +239,7 @@ fun PairScreen(
                     val pairLink = "$currentUrl/?pair=$tokenOnlyInput"
                     handlePairingLink(
                         pairLink,
-                        currentUrl,
+                        currentUrl.orEmpty(),
                         scope,
                         context,
                         navController,
