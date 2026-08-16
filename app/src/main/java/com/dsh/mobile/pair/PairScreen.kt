@@ -6,12 +6,14 @@ import android.widget.Toast
 import androidx.activity.compose.ManagedActivityResultLauncher
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,9 +34,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.net.HttpURLConnection
+import java.net.URL
 import java.net.URLDecoder
 import java.net.URLEncoder
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun PairScreen(
     navController: NavController,
@@ -42,13 +46,39 @@ fun PairScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val baseUrl by settingsViewModel.baseUrl.collectAsStateWithLifecycle()
+    // 收集 ViewModel 多地址状态
+    val activeUrl by settingsViewModel.activeUrl.collectAsStateWithLifecycle()
+    val urls by settingsViewModel.urls.collectAsStateWithLifecycle()
+    // 本地 UI 状态
     var linkInput by remember { mutableStateOf("") }
     var tokenOnlyInput by remember { mutableStateOf("") }
     var isPairing by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
-    var showBaseUrlDialog by remember { mutableStateOf(false) }
-    var tempBaseUrl by remember { mutableStateOf(baseUrl) }
+    var showAddUrlDialog by remember { mutableStateOf(false) }
+    var tempNewUrl by remember { mutableStateOf("") }
+    // 服务器可达性状态
+    var isReachable by remember { mutableStateOf<Boolean?>(null) }
+    var isChecking by remember { mutableStateOf(false) }
+    // 轻量探测：切换 activeUrl 或进入页面时自动探测一次
+    LaunchedEffect(activeUrl) {
+        if (activeUrl.isNullOrBlank()) {
+            isReachable = null
+            isChecking = false
+            return@LaunchedEffect
+        }
+        isChecking = true
+        isReachable = null
+        val result = withContext(Dispatchers.IO) {
+            checkServerReachable(activeUrl)
+        }
+        isReachable = result
+        isChecking = false
+    }
+    // 检查本地是否已有配对 cookie
+    val hasPaired = remember(activeUrl) {
+        val host = runCatching { Uri.parse(activeUrl).host }.getOrNull()
+        host != null && DshHttpClient.getCookie(host, Constants.COOKIE_NAME) != null
+    }
     // 扫码启动器
     val scanLauncher = rememberLauncherForActivityResult(
         contract = ScanContract()
@@ -56,7 +86,7 @@ fun PairScreen(
         result.contents?.let { rawResult ->
             handlePairingLink(
                 rawResult,
-                baseUrl,
+                activeUrl,
                 scope,
                 context,
                 navController,
@@ -85,18 +115,16 @@ fun PairScreen(
             Toast.makeText(context, "需要相机权限才能扫码", Toast.LENGTH_SHORT).show()
         }
     }
-    // 检查本地是否已有配对 cookie
-    val hasPaired = remember(baseUrl) {
-        val host = runCatching { Uri.parse(baseUrl).host }.getOrNull()
-        host != null && DshHttpClient.getCookie(host, Constants.COOKIE_NAME) != null
-    }
     Scaffold(
         topBar = {
             TopAppBar(
                 title = { Text("配对") },
                 actions = {
-                    IconButton(onClick = { showBaseUrlDialog = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "设置服务器地址")
+                    IconButton(onClick = { showAddUrlDialog = true }) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = "添加服务器地址"
+                        )
                     }
                 }
             )
@@ -111,31 +139,26 @@ fun PairScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // 当前服务器地址
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "当前服务器地址",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = baseUrl.ifEmpty { "未设置" },
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
+            // ===== 服务器地址管理区域 =====
+            ServerAddressCard(
+                activeUrl = activeUrl,
+                urls = urls,
+                isReachable = isReachable,
+                isChecking = isChecking,
+                onSelectUrl = { settingsViewModel.setActiveUrl(it) },
+                onRemoveUrl = { urlToRemove ->
+                    // 若删除的是当前激活地址，自动切换到其他可用地址
+                    if (urlToRemove == activeUrl) {
+                        val next = urls.firstOrNull { it != urlToRemove }
+                        next?.let { settingsViewModel.setActiveUrl(it) }
+                    }
+                    settingsViewModel.removeUrl(urlToRemove)
+                },
+                onAddClick = { showAddUrlDialog = true }
+            )
             Spacer(modifier = Modifier.height(8.dp))
             // 已配对状态
-            if (hasPaired) {
+            if (hasPaired && activeUrl.isNotBlank()) {
                 Button(
                     onClick = {
                         navController.navigate("workspaces")
@@ -148,8 +171,8 @@ fun PairScreen(
             // 扫码配对
             Button(
                 onClick = {
-                    if (baseUrl.isEmpty()) {
-                        Toast.makeText(context, "请先设置服务器地址", Toast.LENGTH_SHORT).show()
+                    if (activeUrl.isNullOrBlank()) {
+                        Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
@@ -171,13 +194,13 @@ fun PairScreen(
             )
             Button(
                 onClick = {
-                    if (baseUrl.isEmpty()) {
-                        Toast.makeText(context, "请先设置服务器地址", Toast.LENGTH_SHORT).show()
+                    if (activeUrl.isNullOrBlank()) {
+                        Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     handlePairingLink(
                         linkInput,
-                        baseUrl,
+                        activeUrl,
                         scope,
                         context,
                         navController,
@@ -191,11 +214,11 @@ fun PairScreen(
             ) {
                 Text("手动配对")
             }
-            // 手动输入令牌（仅token，自动拼接到当前baseUrl）
+            // 手动输入令牌（仅 token，自动拼接到当前 activeUrl）
             OutlinedTextField(
                 value = tokenOnlyInput,
                 onValueChange = { tokenOnlyInput = it },
-                label = { Text("仅输入令牌 (自动拼接)") },
+                label = { Text("仅输入令牌(自动拼接)") },
                 placeholder = { Text("输入令牌，如 AbC123") },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !isPairing,
@@ -203,19 +226,18 @@ fun PairScreen(
             )
             Button(
                 onClick = {
-                    if (baseUrl.isEmpty()) {
-                        Toast.makeText(context, "请先设置服务器地址", Toast.LENGTH_SHORT).show()
+                    if (activeUrl.isNullOrBlank()) {
+                        Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     if (tokenOnlyInput.isBlank()) {
                         Toast.makeText(context, "请输入令牌", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
-                    // 构造配对链接
-                    val pairLink = "$baseUrl/?pair=$tokenOnlyInput"
+                    val pairLink = "$activeUrl/?pair=$tokenOnlyInput"
                     handlePairingLink(
                         pairLink,
-                        baseUrl,
+                        activeUrl,
                         scope,
                         context,
                         navController,
@@ -261,15 +283,18 @@ fun PairScreen(
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
-    // 设置地址对话框
-    if (showBaseUrlDialog) {
+    // 添加地址对话框（原「设置服务器地址」对话框升级）
+    if (showAddUrlDialog) {
         AlertDialog(
-            onDismissRequest = { showBaseUrlDialog = false },
-            title = { Text("设置服务器地址") },
+            onDismissRequest = {
+                showAddUrlDialog = false
+                tempNewUrl = ""
+            },
+            title = { Text("添加服务器地址") },
             text = {
                 OutlinedTextField(
-                    value = tempBaseUrl,
-                    onValueChange = { tempBaseUrl = it },
+                    value = tempNewUrl,
+                    onValueChange = { tempNewUrl = it },
                     label = { Text("服务器地址 (含协议和端口)") },
                     placeholder = { Text("http://192.168.1.100:3080") },
                     modifier = Modifier.fillMaxWidth(),
@@ -279,10 +304,16 @@ fun PairScreen(
             confirmButton = {
                 Button(
                     onClick = {
-                        if (tempBaseUrl.isNotBlank()) {
-                            settingsViewModel.setBaseUrl(tempBaseUrl)
-                            showBaseUrlDialog = false
-                            Toast.makeText(context, "服务器地址已更新", Toast.LENGTH_SHORT).show()
+                        val trimmed = tempNewUrl.trim()
+                        if (trimmed.isNotBlank()) {
+                            settingsViewModel.addUrl(trimmed)
+                            // 若当前无激活地址，自动激活新添加的地址
+                            if (activeUrl.isNullOrBlank()) {
+                                settingsViewModel.setActiveUrl(trimmed)
+                            }
+                            showAddUrlDialog = false
+                            tempNewUrl = ""
+                            Toast.makeText(context, "服务器地址已添加", Toast.LENGTH_SHORT).show()
                         } else {
                             Toast.makeText(context, "地址不能为空", Toast.LENGTH_SHORT).show()
                         }
@@ -292,13 +323,192 @@ fun PairScreen(
                 }
             },
             dismissButton = {
-                Button(onClick = { showBaseUrlDialog = false }) {
+                Button(onClick = {
+                    showAddUrlDialog = false
+                    tempNewUrl = ""
+                }) {
                     Text("取消")
                 }
             }
         )
     }
 }
+/**
+ * 服务器地址管理卡片：列表展示、切换、长按删除、在线状态
+ */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ServerAddressCard(
+    activeUrl: String,
+    urls: List<String>,
+    isReachable: Boolean?,
+    isChecking: Boolean,
+    onSelectUrl: (String) -> Unit,
+    onRemoveUrl: (String) -> Unit,
+    onAddClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            // 标题行 + 可达性状态
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "服务器地址",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                when {
+                    isChecking -> {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    }
+                    isReachable == true -> {
+                        StatusBadge(
+                            text = "在线",
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                    isReachable == false -> {
+                        StatusBadge(
+                            text = "离线",
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+            // 当前激活地址
+            if (activeUrl.isNotBlank()) {
+                Text(
+                    text = "当前: $activeUrl",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    text = "未选择服务器地址",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                )
+            }
+            // 离线提示
+            if (isReachable == false && activeUrl.isNotBlank()) {
+                Text(
+                    text = "当前服务器离线，请点击切换其他地址",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            if (urls.isNotEmpty()) {
+                Divider()
+                // 地址列表：点击切换、长按删除
+                urls.forEach { url ->
+                    val isActive = url == activeUrl
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .combinedClickable(
+                                onClick = { onSelectUrl(url) },
+                                onLongClick = { onRemoveUrl(url) }
+                            )
+                            .padding(vertical = 10.dp, horizontal = 4.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = url,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                            color = if (isActive) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            }
+                        )
+                        if (isActive) {
+                            StatusBadge(
+                                text = "当前",
+                                color = MaterialTheme.colorScheme.primaryContainer,
+                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                }
+            }
+            // 添加地址按钮
+            TextButton(
+                onClick = onAddClick,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Add,
+                    contentDescription = null
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("添加地址")
+            }
+        }
+    }
+}
+/**
+ * 小型状态标签（用于「在线/离线/当前」徽章）
+ */
+@Composable
+private fun StatusBadge(
+    text: String,
+    color: Color,
+    contentColor: Color = contentColorFor(color),
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = color,
+        shape = MaterialTheme.shapes.small,
+        modifier = modifier
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = contentColor
+        )
+    }
+}
+/**
+ * 对指定地址做轻量 GET 探测，超时 5s
+ */
+private fun checkServerReachable(url: String): Boolean {
+    return try {
+        val normalizedUrl = url.trim().removeSuffix("/")
+        val statusUrl = "$normalizedUrl/api/pair/status"
+        val connection = URL(statusUrl).openConnection() as HttpURLConnection
+        connection.apply {
+            connectTimeout = 5000
+            readTimeout = 5000
+            requestMethod = "GET"
+            doInput = true
+            instanceFollowRedirects = true
+            setRequestProperty("User-Agent", "DSH-Android/1.0")
+        }
+        val responseCode = connection.responseCode
+        connection.disconnect()
+        responseCode in 200..299
+    } catch (e: Exception) {
+        false
+    }
+}
+// ==================== 以下原有配对逻辑保持不变，仅将 baseUrl 入参替换为 activeUrl 传入 ====================
 private fun handlePairingLink(
     input: String,
     baseUrl: String,
@@ -309,8 +519,8 @@ private fun handlePairingLink(
     setPairing: (Boolean) -> Unit,
     setError: (String?) -> Unit
 ) {
-    if (baseUrl.isEmpty()) {
-        Toast.makeText(context, "请先设置服务器地址", Toast.LENGTH_SHORT).show()
+    if (baseUrl.isBlank()) {
+        Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
         return
     }
     val pairData = parsePairingLink(input, baseUrl)
@@ -334,7 +544,6 @@ private fun handlePairingLink(
             result.fold(
                 onSuccess = { deviceId ->
                     Toast.makeText(context, "配对成功", Toast.LENGTH_SHORT).show()
-                    // 导航到会话列表（工作区 id 可选）
                     val route = if (workspaceId != null) {
                         "sessions/$workspaceId"
                     } else {
@@ -359,7 +568,6 @@ private fun handlePairingLink(
     }
 }
 private fun parsePairingLink(input: String, baseUrl: String): Pair<String, String?>? {
-    // 尝试解析为完整URL
     try {
         val uri = Uri.parse(input)
         val scheme = uri.scheme
@@ -373,11 +581,9 @@ private fun parsePairingLink(input: String, baseUrl: String): Pair<String, Strin
     } catch (_: Exception) {
         // 可能不是完整URL，尝试作为令牌处理
     }
-    // 尝试作为纯令牌
     if (input.matches(Regex("^[A-Za-z0-9_-]+$"))) {
         return Pair(input, null)
     }
-    // 尝试解析为 baseUrl + 令牌
     if (input.startsWith("/")) {
         val token = input.removePrefix("/").trim()
         if (token.isNotBlank()) {

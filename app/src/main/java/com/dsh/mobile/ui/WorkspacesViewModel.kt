@@ -26,11 +26,10 @@ class WorkspacesViewModel(
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     private val _uiState = MutableStateFlow(WorkspacesUiState())
     val uiState: StateFlow<WorkspacesUiState> = _uiState.asStateFlow()
-    val baseUrl = settingsViewModel.baseUrl
     fun loadWorkspaces() {
         viewModelScope.launch {
             // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
-            val readyUrl = settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
+            val readyUrl = settingsViewModel.awaitActiveUrl()
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 val result = RpcClient().call(

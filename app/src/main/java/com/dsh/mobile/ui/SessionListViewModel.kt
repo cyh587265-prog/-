@@ -30,8 +30,7 @@ class SessionListViewModel(
 ) : ViewModel() {
     private val _uiState = MutableStateFlow(SessionsUiState())
     val uiState: StateFlow<SessionsUiState> = _uiState.asStateFlow()
-    val baseUrl = settingsViewModel.baseUrl
-    private suspend fun awaitBaseUrl(): String = settingsViewModel.baseUrl.filter { it.isNotBlank() }.first()
+    private suspend fun awaitBaseUrl(): String = settingsViewModel.awaitActiveUrl()
     private val json = Json { ignoreUnknownKeys = true; coerceInputValues = true }
     fun loadFirstPage() {
         viewModelScope.launch {

@@ -11,27 +11,85 @@ import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.builtins.serializer
+import kotlinx.serialization.json.Json
 private val Context.dataStore by preferencesDataStore("settings")
+/**
+ * 服务器地址管理 ViewModel：多地址存储 + 活跃地址 + 旧版迁移。
+ */
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
     private val dataStore: DataStore<Preferences>
         get() = getApplication<Application>().dataStore
-    private val _baseUrl = MutableStateFlow("")
-    val baseUrl: StateFlow<String> = _baseUrl.asStateFlow()
+    private val json = Json { ignoreUnknownKeys = true }
+
+    private val _urls = MutableStateFlow<List<String>>(emptyList())
+    val urls: StateFlow<List<String>> = _urls.asStateFlow()
+
+    private val _activeUrl = MutableStateFlow<String?>(null)
+    val activeUrl: StateFlow<String?> = _activeUrl.asStateFlow()
+
     init {
-        // 异步加载，避免阻塞主线程
         viewModelScope.launch {
             val prefs = dataStore.data.first()
-            _baseUrl.value = prefs[stringPreferencesKey("server_base_url")] ?: ""
+            val oldBaseUrl = prefs[stringPreferencesKey("server_base_url")]
+            val urlsJson = prefs[stringPreferencesKey("server_urls")]
+            var urlList: List<String> = emptyList()
+            if (!urlsJson.isNullOrEmpty()) {
+                try {
+                    urlList = json.decodeFromString(ListSerializer(String.serializer()), urlsJson)
+                } catch (e: Exception) {
+                    // 解析失败则忽略
+                }
+            }
+            // 旧版迁移
+            if (urlList.isEmpty() && !oldBaseUrl.isNullOrEmpty()) {
+                urlList = listOf(oldBaseUrl)
+                saveUrls(urlList)
+            }
+            _urls.value = urlList
+            _activeUrl.value = urlList.firstOrNull()
         }
     }
-    fun setBaseUrl(url: String) {
-        _baseUrl.value = url
-        viewModelScope.launch {
-            dataStore.edit { prefs ->
-                prefs[stringPreferencesKey("server_base_url")] = url
-            }
+
+    fun addUrl(url: String): Boolean {
+        val trimmed = url.trim()
+        if (trimmed.isEmpty()) return false
+        val current = _urls.value.toMutableList()
+        if (current.contains(trimmed)) return false
+        current.add(trimmed)
+        _urls.value = current
+        if (_activeUrl.value == null) _activeUrl.value = trimmed
+        viewModelScope.launch { saveUrls(current) }
+        return true
+    }
+
+    fun removeUrl(url: String): Boolean {
+        val current = _urls.value.toMutableList()
+        if (!current.remove(url)) return false
+        _urls.value = current
+        if (_activeUrl.value == url) _activeUrl.value = current.firstOrNull()
+        viewModelScope.launch { saveUrls(current) }
+        return true
+    }
+
+    fun setActiveUrl(url: String): Boolean {
+        if (!_urls.value.contains(url)) return false
+        _activeUrl.value = url
+        return true
+    }
+
+    /** 等待活跃地址就绪（挂起直到非空）。 */
+    suspend fun awaitActiveUrl(): String =
+        _activeUrl.filter { it != null }.first() ?: ""
+
+    private suspend fun saveUrls(urls: List<String>) {
+        val urlsJson = json.encodeToString(ListSerializer(String.serializer()), urls)
+        dataStore.edit { prefs ->
+            prefs[stringPreferencesKey("server_urls")] = urlsJson
         }
     }
 }
