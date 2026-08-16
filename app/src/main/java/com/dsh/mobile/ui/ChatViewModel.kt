@@ -426,4 +426,3 @@ class ChatViewModel(
         }
     }
 }
-ChatScreen.kt：
