@@ -71,42 +71,13 @@ class ChatViewModel(
             is MessageEvent.Chunk -> handleChunk(event.delta)
         }
     }
-    /** 处理流式增量：累积到对应 turn 的 pending 消息（同一轮的多步骤合并到一个气泡） */
+    /**
+     * 流式增量：DSH agent 回复是多 turn/多 step（思考、工具调用、文本交错），
+     * 中间增量不创建气泡（避免堆积/内容混杂），只保持「生成中」指示；
+     * 完整消息（assistant/message）到达时正常追加/替换。
+     */
     private fun handleChunk(delta: ChunkDelta) {
-        val key = delta.turn
-        val pending = pendingByTurnStep[key]
-        val updated = if (pending != null) {
-            pending.copy(
-                text = if (delta.kind == "text") pending.text + delta.text else pending.text,
-                reasoning = if (delta.kind == "reasoning") pending.reasoning + delta.text else pending.reasoning,
-                isPending = true
-            )
-        } else {
-            ChatMessageUi(
-                id = "pending-$key",
-                text = if (delta.kind == "text") delta.text else "",
-                reasoning = if (delta.kind == "reasoning") delta.text else "",
-                kind = MessageKind.Assistant,
-                isPending = true,
-                turn = key,
-                step = null,
-                seq = null
-            )
-        }
-        pendingByTurnStep[key] = updated
-        _uiState.update { state ->
-            val idx = state.messages.indexOfFirst { it.id == updated.id }
-            val newMessages = if (idx >= 0) {
-                // 已存在：替换内容，保持位置
-                state.messages.toMutableList().apply { set(idx, updated) }
-            } else {
-                // 新 pending：追加到末尾
-                state.messages + updated
-            }
-            // 多轮生成：只要还有 pending 就保持 isSending
-            state.copy(messages = newMessages, isSending = pendingByTurnStep.isNotEmpty())
-        }
-        // limitMessages 移到完整消息/历史合并处，避免每个 chunk 都复制截断
+        _uiState.update { it.copy(isSending = true) }
     }
     /** 处理完整消息：assistant 到达时替换对应 pending；user 消息直接追加 */
     private fun handleFullMessage(wireMessage: WireMessage) {
