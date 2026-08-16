@@ -29,7 +29,7 @@ class WorkspacesViewModel(
     fun loadWorkspaces() {
         viewModelScope.launch {
             // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
-            val readyUrl = settingsViewModel.awaitActiveUrl()
+            val readyUrl = settingsViewModel.awaitActiveUrl() ?: return@launch
             _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 val result = RpcClient().call(

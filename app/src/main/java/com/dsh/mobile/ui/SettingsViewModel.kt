@@ -14,6 +14,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.json.Json
@@ -25,6 +28,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private val dataStore: DataStore<Preferences>
         get() = getApplication<Application>().dataStore
     private val json = Json { ignoreUnknownKeys = true }
+    private val saveMutex = Mutex()
 
     private val _urls = MutableStateFlow<List<String>>(emptyList())
     val urls: StateFlow<List<String>> = _urls.asStateFlow()
@@ -49,9 +53,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             if (urlList.isEmpty() && !oldBaseUrl.isNullOrEmpty()) {
                 urlList = listOf(oldBaseUrl)
                 saveUrls(urlList)
+                // 迁移成功后清理旧 key，避免旧代码读到过期值
+                dataStore.edit { it.remove(stringPreferencesKey("server_base_url")) }
             }
             _urls.value = urlList
-            _activeUrl.value = urlList.firstOrNull()
+            // 优先恢复上次选中的活跃地址
+            val savedActive = prefs[stringPreferencesKey("server_active_url")]
+            _activeUrl.value = if (savedActive != null && savedActive in urlList) savedActive else urlList.firstOrNull()
         }
     }
 
@@ -79,14 +87,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun setActiveUrl(url: String): Boolean {
         if (!_urls.value.contains(url)) return false
         _activeUrl.value = url
+        // 持久化活跃地址，重启后恢复
+        viewModelScope.launch {
+            dataStore.edit { prefs -> prefs[stringPreferencesKey("server_active_url")] = url }
+        }
         return true
     }
 
-    /** 等待活跃地址就绪（挂起直到非空）。 */
-    suspend fun awaitActiveUrl(): String =
-        _activeUrl.filter { it != null }.first() ?: ""
+    /**
+     * 等待活跃地址就绪（挂起直到非空，或超时返回 null——避免无地址时永久挂起）。
+     */
+    suspend fun awaitActiveUrl(timeoutMs: Long = 8000): String? =
+        withTimeoutOrNull(timeoutMs) { _activeUrl.filter { it != null }.first() }
 
-    private suspend fun saveUrls(urls: List<String>) {
+    private suspend fun saveUrls(urls: List<String>) = saveMutex.withLock {
         val urlsJson = json.encodeToString(ListSerializer(String.serializer()), urls)
         dataStore.edit { prefs ->
             prefs[stringPreferencesKey("server_urls")] = urlsJson
