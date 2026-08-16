@@ -155,16 +155,16 @@ class MuxFallbackPoller(
         }
 
         // Silent detection: SSE stays open but zero bytes under quick tunnels.
-        // Every 3s, if no valid message for 5s, switch to polling (loop until started).
+        // Every 2s, if no valid message for 2s, switch to polling fast (quick tunnel gives up immediately).
         scope.launch {
             while (isActive && !pollStarted) {
-                delay(3000)
-                if (System.currentTimeMillis() - lastDataTime.get() > 5000) {
+                delay(2000)
+                if (System.currentTimeMillis() - lastDataTime.get() > 2000) {
                     pollStarted = true
                     streamJob?.cancel()
                     // catch-up：切换前先拉一次历史，避免切换窗口丢消息
                     pollHistory()
-                    startPoller(2000)
+                    startPoller(1000)
                 }
             }
         }
