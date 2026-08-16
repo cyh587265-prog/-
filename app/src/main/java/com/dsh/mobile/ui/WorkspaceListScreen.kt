@@ -49,7 +49,6 @@ fun WorkspaceListScreen(
     viewModel: WorkspacesViewModel = viewModel()
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val baseUrl by viewModel.baseUrl.collectAsState()
     LaunchedEffect(Unit) {
         viewModel.loadWorkspaces()
     }

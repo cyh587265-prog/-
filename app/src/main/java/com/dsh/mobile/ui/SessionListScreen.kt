@@ -63,7 +63,6 @@ fun SessionListScreen(
     )
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    val baseUrl by viewModel.baseUrl.collectAsState()
     val listState = rememberLazyListState()
     var showRenameDialog by remember { mutableStateOf(false) }
     var renameSessionId by remember { mutableStateOf<String?>(null) }

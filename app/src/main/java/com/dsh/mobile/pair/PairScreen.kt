@@ -18,6 +18,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -47,7 +48,8 @@ fun PairScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // 收集 ViewModel 多地址状态
-    val activeUrl by settingsViewModel.activeUrl.collectAsStateWithLifecycle()
+    val currentUrlState = settingsViewModel.activeUrl.collectAsStateWithLifecycle()
+    val currentUrl = currentUrlState.value
     val urls by settingsViewModel.urls.collectAsStateWithLifecycle()
     // 本地 UI 状态
     var linkInput by remember { mutableStateOf("") }
@@ -59,9 +61,9 @@ fun PairScreen(
     // 服务器可达性状态
     var isReachable by remember { mutableStateOf<Boolean?>(null) }
     var isChecking by remember { mutableStateOf(false) }
-    // 轻量探测：切换 activeUrl 或进入页面时自动探测一次
-    LaunchedEffect(activeUrl) {
-        if (activeUrl.isNullOrBlank()) {
+    // 轻量探测：切换 currentUrl 或进入页面时自动探测一次
+    LaunchedEffect(currentUrl) {
+        if (currentUrl.isNullOrBlank()) {
             isReachable = null
             isChecking = false
             return@LaunchedEffect
@@ -69,14 +71,14 @@ fun PairScreen(
         isChecking = true
         isReachable = null
         val result = withContext(Dispatchers.IO) {
-            checkServerReachable(activeUrl)
+            checkServerReachable(currentUrl)
         }
         isReachable = result
         isChecking = false
     }
     // 检查本地是否已有配对 cookie
-    val hasPaired = remember(activeUrl) {
-        val host = runCatching { Uri.parse(activeUrl).host }.getOrNull()
+    val hasPaired = remember(currentUrl) {
+        val host = runCatching { Uri.parse(currentUrl).host }.getOrNull()
         host != null && DshHttpClient.getCookie(host, Constants.COOKIE_NAME) != null
     }
     // 扫码启动器
@@ -86,7 +88,7 @@ fun PairScreen(
         result.contents?.let { rawResult ->
             handlePairingLink(
                 rawResult,
-                activeUrl,
+                currentUrl,
                 scope,
                 context,
                 navController,
@@ -141,14 +143,14 @@ fun PairScreen(
         ) {
             // ===== 服务器地址管理区域 =====
             ServerAddressCard(
-                activeUrl = activeUrl,
+                currentUrl = currentUrl,
                 urls = urls,
                 isReachable = isReachable,
                 isChecking = isChecking,
                 onSelectUrl = { settingsViewModel.setActiveUrl(it) },
                 onRemoveUrl = { urlToRemove ->
                     // 若删除的是当前激活地址，自动切换到其他可用地址
-                    if (urlToRemove == activeUrl) {
+                    if (urlToRemove == currentUrl) {
                         val next = urls.firstOrNull { it != urlToRemove }
                         next?.let { settingsViewModel.setActiveUrl(it) }
                     }
@@ -158,7 +160,7 @@ fun PairScreen(
             )
             Spacer(modifier = Modifier.height(8.dp))
             // 已配对状态
-            if (hasPaired && activeUrl.isNotBlank()) {
+            if (hasPaired && !currentUrl.isNullOrBlank()) {
                 Button(
                     onClick = {
                         navController.navigate("workspaces")
@@ -171,7 +173,7 @@ fun PairScreen(
             // 扫码配对
             Button(
                 onClick = {
-                    if (activeUrl.isNullOrBlank()) {
+                    if (currentUrl.isNullOrBlank()) {
                         Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
@@ -194,13 +196,13 @@ fun PairScreen(
             )
             Button(
                 onClick = {
-                    if (activeUrl.isNullOrBlank()) {
+                    if (currentUrl.isNullOrBlank()) {
                         Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
                     handlePairingLink(
                         linkInput,
-                        activeUrl,
+                        currentUrl,
                         scope,
                         context,
                         navController,
@@ -214,7 +216,7 @@ fun PairScreen(
             ) {
                 Text("手动配对")
             }
-            // 手动输入令牌（仅 token，自动拼接到当前 activeUrl）
+            // 手动输入令牌（仅 token，自动拼接到当前 currentUrl）
             OutlinedTextField(
                 value = tokenOnlyInput,
                 onValueChange = { tokenOnlyInput = it },
@@ -226,7 +228,7 @@ fun PairScreen(
             )
             Button(
                 onClick = {
-                    if (activeUrl.isNullOrBlank()) {
+                    if (currentUrl.isNullOrBlank()) {
                         Toast.makeText(context, "请先设置或选择服务器地址", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
@@ -234,10 +236,10 @@ fun PairScreen(
                         Toast.makeText(context, "请输入令牌", Toast.LENGTH_SHORT).show()
                         return@Button
                     }
-                    val pairLink = "$activeUrl/?pair=$tokenOnlyInput"
+                    val pairLink = "$currentUrl/?pair=$tokenOnlyInput"
                     handlePairingLink(
                         pairLink,
-                        activeUrl,
+                        currentUrl,
                         scope,
                         context,
                         navController,
@@ -308,7 +310,7 @@ fun PairScreen(
                         if (trimmed.isNotBlank()) {
                             settingsViewModel.addUrl(trimmed)
                             // 若当前无激活地址，自动激活新添加的地址
-                            if (activeUrl.isNullOrBlank()) {
+                            if (currentUrl.isNullOrBlank()) {
                                 settingsViewModel.setActiveUrl(trimmed)
                             }
                             showAddUrlDialog = false
@@ -339,7 +341,7 @@ fun PairScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ServerAddressCard(
-    activeUrl: String,
+    currentUrl: String,
     urls: List<String>,
     isReachable: Boolean?,
     isChecking: Boolean,
@@ -390,9 +392,9 @@ private fun ServerAddressCard(
                 }
             }
             // 当前激活地址
-            if (activeUrl.isNotBlank()) {
+            if (!currentUrl.isNullOrBlank()) {
                 Text(
-                    text = "当前: $activeUrl",
+                    text = "当前: $currentUrl",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -404,7 +406,7 @@ private fun ServerAddressCard(
                 )
             }
             // 离线提示
-            if (isReachable == false && activeUrl.isNotBlank()) {
+            if (isReachable == false && !currentUrl.isNullOrBlank()) {
                 Text(
                     text = "当前服务器离线，请点击切换其他地址",
                     style = MaterialTheme.typography.bodySmall,
@@ -415,7 +417,7 @@ private fun ServerAddressCard(
                 Divider()
                 // 地址列表：点击切换、长按删除
                 urls.forEach { url ->
-                    val isActive = url == activeUrl
+                    val isActive = url == currentUrl
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -508,7 +510,7 @@ private fun checkServerReachable(url: String): Boolean {
         false
     }
 }
-// ==================== 以下原有配对逻辑保持不变，仅将 baseUrl 入参替换为 activeUrl 传入 ====================
+// ==================== 以下原有配对逻辑保持不变，仅将 baseUrl 入参替换为 currentUrl 传入 ====================
 private fun handlePairingLink(
     input: String,
     baseUrl: String,
