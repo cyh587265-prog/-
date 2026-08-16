@@ -38,6 +38,7 @@ fun ChatScreen(
     val listState = rememberLazyListState()
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
+    // 监听 messages 列表引用变化（包括流式更新替换 pending 内容），自动滚动到底部
     LaunchedEffect(uiState.messages.size) {
         if (uiState.messages.isNotEmpty()) {
             listState.animateScrollToItem(uiState.messages.lastIndex)
@@ -415,64 +416,7 @@ fun ReasoningEffortDialog(
         text = {
             Column(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text("模型: $modelName")
-                Text("思考强度: $effort")
-                Slider(
-                    value = effort.toFloat(),
-                    onValueChange = { effort = it.toInt() },
-                    valueRange = 0f..5f,
-                    steps = 5
-                )
-                Row(
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text("低")
-                    Text("高")
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(if (effort > 0) effort else null) }) {
-                Text("确认")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        }
-    )
-}
-enum class MessageKind {
-    User, Assistant
-}
-data class ChatMessageUi(
-    val id: String,
-    val text: String,
-    val reasoning: String,
-    val kind: MessageKind,
-    val isPending: Boolean = false,
-    val turn: Int? = null,
-    val step: Int? = null,
-    val seq: Int? = null
-)
-data class ModelItem(
-    val id: String,
-    val name: String,
-    val provider: String,
-    val defaultEffort: String? = null
-)
-data class ChatUiState(
-    val messages: List<ChatMessageUi> = emptyList(),
-    val inputText: String = "",
-    val isSending: Boolean = false,
-    val isLoadingHistory: Boolean = false,
-    val hasMoreHistory: Boolean = true,
-    val currentModel: String? = null,
-    val models: Map<String, List<ModelItem>> = emptyMap(),
-    val isLoadingModels: Boolean = false,
-    val showModelDialog: Boolean = false,
-    val error: String? = null
-)
+尽管问，带图也行
+快速
+进阶
+内容由AI生成，请仔细甄别

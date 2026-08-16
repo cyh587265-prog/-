@@ -4,17 +4,17 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.dsh.mobile.net.ChunkDelta
+import com.dsh.mobile.net.MessageEvent
 import com.dsh.mobile.net.MuxFallbackPoller
 import com.dsh.mobile.net.RpcClient
 import com.dsh.mobile.net.WireMessage
-import com.dsh.mobile.ui.SettingsViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.*
-import kotlinx.serialization.json.Json
 import java.util.UUID
 class ChatViewModel(
     private val workspaceId: String,
@@ -34,6 +34,8 @@ class ChatViewModel(
         isLenient = true
         coerceInputValues = true
     }
+    // 流式增量累积：按 (turn, step) 索引正在生成的 pending 消息
+    private val pendingByTurnStep = mutableMapOf<Pair<Int, Int>, ChatMessageUi>()
     init {
         viewModelScope.launch {
             // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
@@ -49,21 +51,65 @@ class ChatViewModel(
         streamJob = viewModelScope.launch {
             // 等待服务器地址就绪（DataStore 异步加载完成）
             val baseUrl = settingsViewModel.awaitActiveUrl() ?: return@launch
-            // 统一消息入口：Poller 内部 SSE 优先 + 静默检测切轮询，输出完整 WireMessage
+            // 统一消息入口：Poller 内部 SSE 优先 + 静默轮询切换，输出 MessageEvent（完整消息或增量）
             // 关键：消息经 Flow 发射，必须在 collect 里消费（onEvent 参数 Poller 不调用）
             MuxFallbackPoller(rpcClient, baseUrl)
-                .observe(sessionId) { /* onEvent unused; flow is the channel */ }
+                .observeWithDeltas(sessionId)
                 .catch { e -> Log.e("ChatViewModel", "Message stream error", e) }
                 .buffer(Channel.UNLIMITED)  // 无界缓冲：UI 慢时不丢消息
-                .collect { wireMessage -> handleWireMessage(wireMessage) }
+                .collect { event -> handleMessageEvent(event) }
         }
     }
-
     override fun onCleared() {
         streamJob?.cancel()
         super.onCleared()
     }
-    private fun handleWireMessage(wireMessage: WireMessage) {
+    /** 分发完整消息或流式增量事件 */
+    private fun handleMessageEvent(event: MessageEvent) {
+        when (event) {
+            is MessageEvent.FullMessage -> handleFullMessage(event.msg)
+            is MessageEvent.Chunk -> handleChunk(event.delta)
+        }
+    }
+    /** 处理流式增量：累积到对应 (turn,step) 的 pending 消息 */
+    private fun handleChunk(delta: ChunkDelta) {
+        val key = Pair(delta.turn, delta.step)
+        val pending = pendingByTurnStep[key]
+        val updated = if (pending != null) {
+            pending.copy(
+                text = if (delta.kind == "text") pending.text + delta.text else pending.text,
+                reasoning = if (delta.kind == "reasoning") pending.reasoning + delta.text else pending.reasoning,
+                isPending = true
+            )
+        } else {
+            ChatMessageUi(
+                id = "pending-${delta.turn}-${delta.step}",
+                text = if (delta.kind == "text") delta.text else "",
+                reasoning = if (delta.kind == "reasoning") delta.text else "",
+                kind = MessageKind.Assistant,
+                isPending = true,
+                turn = delta.turn,
+                step = delta.step,
+                seq = null
+            )
+        }
+        pendingByTurnStep[key] = updated
+        _uiState.update { state ->
+            val idx = state.messages.indexOfFirst { it.id == updated.id }
+            val newMessages = if (idx >= 0) {
+                // 已存在：替换内容，保持位置
+                state.messages.toMutableList().apply { set(idx, updated) }
+            } else {
+                // 新 pending：追加到末尾
+                state.messages + updated
+            }
+            // 多轮生成：只要还有 pending 就保持 isSending
+            state.copy(messages = newMessages, isSending = pendingByTurnStep.isNotEmpty())
+        }
+        // limitMessages 移到完整消息/历史合并处，避免每个 chunk 都复制截断
+    }
+    /** 处理完整消息：assistant 到达时替换对应 pending；user 消息直接追加 */
+    private fun handleFullMessage(wireMessage: WireMessage) {
         // 只有 assistant 完整消息到达才取消发送超时
         if (wireMessage.kind == "assistant") sendTimeoutJob?.cancel()
         // 按 seq 去重
@@ -82,16 +128,31 @@ class ChatViewModel(
             "user" -> MessageKind.User
             else -> MessageKind.Assistant
         }
+        // 尝试按 (turn, step) 匹配并移除对应 pending
+        val turn = wireMessage.turn
+        val step = wireMessage.step
+        val key = if (turn != null && step != null) Pair(turn, step) else null
+        val pending = key?.let { pendingByTurnStep.remove(it) }
         val message = ChatMessageUi(
-            id = wireMessage.id,
+            // 若有 pending 则保留其 id，避免 LazyColumn key 变化导致重组闪烁
+            id = pending?.id ?: wireMessage.id,
             text = text,
             reasoning = reasoning,
             kind = kind,
             isPending = false,
+            turn = turn,
+            step = step,
             seq = wireMessage.seq
         )
         _uiState.update { state ->
-            state.copy(messages = state.messages + message, isSending = false)
+            val newMessages = if (pending != null && kind == MessageKind.Assistant) {
+                // 替换同 id 的 pending 消息
+                state.messages.map { if (it.id == pending.id) message else it }
+            } else {
+                state.messages + message
+            }
+            // 多轮生成：isSending 跟随剩余 pending 数
+            state.copy(messages = newMessages, isSending = pendingByTurnStep.isNotEmpty())
         }
         limitMessages()
     }
@@ -122,7 +183,7 @@ class ChatViewModel(
                 }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Failed to send message", e)
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         isSending = false,
                         error = "发送失败: ${e.message}"
@@ -158,7 +219,7 @@ class ChatViewModel(
                 val events = result["events"]?.jsonArray ?: emptyList()
                 val parsed = events.mapNotNull { entry ->
                     val eventObj = entry.jsonObject["event"]?.jsonObject
-                        ?: entry.jsonObject // 容错：兼容直接是 event 的情况
+                        ?: entry.jsonObject // 容错：直接是 event 的情况
                     parseWireMessageFromJson(eventObj)
                 }.sortedBy { it.seq }
                 val messages = if (parsed.size > HISTORY_PAGE_SIZE) {
@@ -181,7 +242,7 @@ class ChatViewModel(
                 limitMessages()
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Failed to load history", e)
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         isLoadingHistory = false,
                         error = "加载历史失败: ${e.message}"
@@ -236,7 +297,7 @@ class ChatViewModel(
                 }
             } catch (e: Exception) {
                 Log.e("ChatViewModel", "Failed to load models", e)
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         isLoadingModels = false,
                         error = "加载模型失败: ${e.message}"
@@ -256,7 +317,7 @@ class ChatViewModel(
                     reasoningEffort?.let { put("reasoningEffort", it) }
                 }
                 rpcClient.call("session.selectModel", payload, baseUrl)
-                _uiState.update { 
+                _uiState.update {
                     it.copy(
                         currentModel = model,
                         showModelDialog = false
@@ -274,6 +335,15 @@ class ChatViewModel(
             val typeName = eventObj["type"]?.jsonPrimitive?.content ?: return null
             val seq = eventObj["seq"]?.jsonPrimitive?.int ?: return null
             val data = eventObj["data"]?.jsonObject ?: return null
+            // 尝试解析 turn / step（部分服务端事件可能携带）
+            val turn = try {
+                data["turn"]?.jsonPrimitive?.int
+                    ?: data["message"]?.jsonObject?.get("turn")?.jsonPrimitive?.int
+            } catch (_: Exception) { null }
+            val step = try {
+                data["step"]?.jsonPrimitive?.int
+                    ?: data["message"]?.jsonObject?.get("step")?.jsonPrimitive?.int
+            } catch (_: Exception) { null }
             // Only complete messages: user/message content is data.content,
             // assistant/message content is data.message.content (asymmetric!)
             val isUser = typeName == "user/message"
@@ -304,6 +374,8 @@ class ChatViewModel(
                 reasoning = reasoning,
                 kind = if (isUser) MessageKind.User else MessageKind.Assistant,
                 isPending = false,
+                turn = turn,
+                step = step,
                 seq = seq
             )
         } catch (e: Exception) {
@@ -311,17 +383,14 @@ class ChatViewModel(
             return null
         }
     }
-    private fun addMessage(message: ChatMessageUi) {
-        _uiState.update { state ->
-            val newMessages = state.messages + message
-            state.copy(messages = newMessages)
-        }
-        limitMessages()
-    }
     private fun limitMessages() {
         _uiState.update { state ->
             if (state.messages.size > maxMessages) {
-                state.copy(messages = state.messages.takeLast(maxMessages))
+                val trimmed = state.messages.takeLast(maxMessages)
+                // 清理已不在消息列表中的 pending 引用，防止内存泄漏
+                val remainingIds = trimmed.map { it.id }.toSet()
+                pendingByTurnStep.entries.removeIf { (_, msg) -> msg.id !in remainingIds }
+                state.copy(messages = trimmed)
             } else {
                 state
             }
@@ -357,3 +426,4 @@ class ChatViewModel(
         }
     }
 }
+ChatScreen.kt：
