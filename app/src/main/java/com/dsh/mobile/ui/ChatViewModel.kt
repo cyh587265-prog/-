@@ -34,8 +34,8 @@ class ChatViewModel(
         isLenient = true
         coerceInputValues = true
     }
-    // 流式增量累积：按 (turn, step) 索引正在生成的 pending 消息
-    private val pendingByTurnStep = mutableMapOf<Pair<Int, Int>, ChatMessageUi>()
+    // 流式增量累积：按 turn 索引正在生成的 pending 消息（同一轮多步骤合并到一个气泡）
+    private val pendingByTurnStep = mutableMapOf<Int, ChatMessageUi>()
     init {
         viewModelScope.launch {
             // 等待服务器地址就绪（SettingsViewModel 异步从 DataStore 加载）
@@ -71,9 +71,9 @@ class ChatViewModel(
             is MessageEvent.Chunk -> handleChunk(event.delta)
         }
     }
-    /** 处理流式增量：累积到对应 (turn,step) 的 pending 消息 */
+    /** 处理流式增量：累积到对应 turn 的 pending 消息（同一轮的多步骤合并到一个气泡） */
     private fun handleChunk(delta: ChunkDelta) {
-        val key = Pair(delta.turn, delta.step)
+        val key = delta.turn
         val pending = pendingByTurnStep[key]
         val updated = if (pending != null) {
             pending.copy(
@@ -83,13 +83,13 @@ class ChatViewModel(
             )
         } else {
             ChatMessageUi(
-                id = "pending-${delta.turn}-${delta.step}",
+                id = "pending-$key",
                 text = if (delta.kind == "text") delta.text else "",
                 reasoning = if (delta.kind == "reasoning") delta.text else "",
                 kind = MessageKind.Assistant,
                 isPending = true,
-                turn = delta.turn,
-                step = delta.step,
+                turn = key,
+                step = null,
                 seq = null
             )
         }
@@ -128,10 +128,9 @@ class ChatViewModel(
             "user" -> MessageKind.User
             else -> MessageKind.Assistant
         }
-        // 尝试按 (turn, step) 匹配并移除对应 pending
+        // 尝试按 turn 匹配并移除对应 pending（同轮多步骤合并）
         val turn = wireMessage.turn
-        val step = wireMessage.step
-        val key = if (turn != null && step != null) Pair(turn, step) else null
+        val key = turn
         val pending = key?.let { pendingByTurnStep.remove(it) }
         val message = ChatMessageUi(
             // 若有 pending 则保留其 id，避免 LazyColumn key 变化导致重组闪烁
