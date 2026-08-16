@@ -99,6 +99,8 @@ class ChatViewModel(
             "user" -> MessageKind.User
             else -> MessageKind.Assistant
         }
+        // 跳过无文本内容的消息（纯工具调用/空 content），避免空气泡
+        if (text.isBlank() && reasoning.isBlank()) return
         // 尝试按 turn 匹配并移除对应 pending（同轮多步骤合并）
         val turn = wireMessage.turn
         val key = turn

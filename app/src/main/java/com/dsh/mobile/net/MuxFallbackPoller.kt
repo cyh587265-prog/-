@@ -50,6 +50,8 @@ class MuxFallbackPoller(
                     "reasoning" -> reasoning += b["text"]?.jsonPrimitive?.content ?: ""
                 }
             }
+            // 跳过无文本内容的消息（如纯 tool-call 块），避免空气泡
+            if (text.isBlank() && reasoning.isBlank()) return null
             WireMessage(
                 id = data["id"]?.jsonPrimitive?.content
                     ?: data["message"]?.jsonObject?.get("id")?.jsonPrimitive?.content
